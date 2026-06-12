@@ -1707,8 +1707,10 @@ def main() -> None:
     load_dotenv()
     init_db()
     seed_if_empty()
-    server = ThreadingHTTPServer(("127.0.0.1", 8787), Handler)
-    print("AI気づきツリー MVP running: http://127.0.0.1:8787")
+    port = int(os.environ.get("PORT", 8787))
+    host = "0.0.0.0"
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"AI気づきツリー MVP running: http://{host}:{port}")
     server.serve_forever()
 
 
