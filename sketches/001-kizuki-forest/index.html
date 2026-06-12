@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>気づきの森 ラフ</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',sans-serif;background:radial-gradient(circle at 20% 10%,#fff7d9 0,#f5efe2 28%,#dfe9d7 100%);color:#2c2a22;min-height:100vh;overflow:hidden} .top{position:fixed;z-index:20;top:18px;left:24px;right:24px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.panel{background:#ffffffcc;backdrop-filter:blur(14px);border:1px solid #fff8;border-radius:22px;box-shadow:0 12px 40px #40602022;padding:16px 18px}.top h1{font-size:24px;margin:0 0 4px}.top p{margin:0;color:#69634f}.modes button{border:0;border-radius:999px;padding:10px 14px;margin:3px;background:#fff;color:#526044;font-weight:700;box-shadow:0 3px 12px #0001}.modes button.active{background:#477451;color:white}.field{position:relative;width:100vw;height:100vh}.vine{position:absolute;border:1px solid #789b6844;border-radius:50%;transform:rotate(var(--r));filter:blur(.2px)}.vine.a{width:620px;height:260px;left:12%;top:28%}.vine.b{width:520px;height:210px;right:8%;top:40%}.vine.c{width:380px;height:180px;left:34%;bottom:12%}.card{position:absolute;width:210px;min-height:98px;background:#fffdf4e8;border:1px solid #fff9;border-radius:26px;padding:14px 15px;box-shadow:0 18px 45px #38502b2a;cursor:pointer;transition:.35s transform,.35s box-shadow,.35s background}.card:hover,.card.open{transform:translateY(-8px) scale(1.05);box-shadow:0 28px 70px #38502b40;background:#fff}.card b{display:block;font-size:14px;color:#496c3e}.card p{font-size:15px;line-height:1.55;margin:8px 0 0}.tag{display:inline-block;font-size:12px;margin-top:8px;background:#e8f2dc;color:#4e7042;padding:3px 9px;border-radius:999px}.full{display:none;margin-top:8px;color:#555;font-size:14px}.card.open .full{display:block}.glow{position:absolute;width:70px;height:70px;border-radius:50%;background:#fffaad77;filter:blur(18px);animation:pulse 3s infinite ease-in-out}.note{position:fixed;bottom:18px;left:24px;max-width:500px}.detail{position:fixed;right:24px;bottom:24px;width:min(360px,calc(100vw - 48px));display:none}.detail.show{display:block}.detail h2{margin:0 0 8px;font-size:20px}@keyframes pulse{0%,100%{transform:scale(.9);opacity:.4}50%{transform:scale(1.25);opacity:.8}}@media(max-width:760px){body{overflow:auto}.field{height:1200px}.top{position:absolute;display:block}.modes{margin-top:12px}.card{width:185px}.note{display:none}}
+</style>
+</head><body>
+<div class="top"><div class="panel"><h1>気づきの森</h1><p>承諾された声が、森の中の光のように点在します。</p></div><div class="panel modes"><button class="active">森で見る</button><button>読む</button><button>テーマ</button></div></div>
+<div class="field">
+<div class="vine a" style="--r:-8deg"></div><div class="vine b" style="--r:15deg"></div><div class="vine c" style="--r:4deg"></div>
+<div class="glow" style="left:23%;top:37%"></div><div class="glow" style="left:58%;top:30%;animation-delay:1s"></div><div class="glow" style="left:72%;top:63%;animation-delay:2s"></div>
+<div class="card" style="left:16%;top:32%" data-title="待つことの焦り" data-body="7回目を終えて、待つことが苦手だと気づきました。焦って相手を変えようとしていたかもしれません。"><b>Aさん</b><p>待つことが苦手だと気づきました。</p><span class="tag">待つ</span><div class="full">クリックすると周辺の似た気づきが光る想定。</div></div>
+<div class="card" style="left:38%;top:25%" data-title="身体のそわそわ" data-body="待つ時間に身体がそわそわする感じがあります。呼吸に戻ると少し落ち着きました。"><b>Bさん</b><p>待つ時間に身体がそわそわします。</p><span class="tag">身体感覚</span></div>
+<div class="card" style="left:63%;top:36%" data-title="安心に戻る" data-body="笑いの呼吸をすると少し安心できました。考えるより先に身体が緩む感じでした。"><b>Cさん</b><p>笑いの呼吸で少し安心できました。</p><span class="tag">安心</span></div>
+<div class="card" style="left:25%;top:62%" data-title="相手を変えない" data-body="相手を変えようとしていたことに気づきました。まず自分の内側を見たいです。"><b>Dさん</b><p>相手を変えようとしていたかも。</p><span class="tag">手放す</span></div>
+<div class="card" style="left:55%;top:68%" data-title="涙が出た" data-body="言葉にした瞬間、涙が出ました。自分でも気づいていなかった寂しさがありました。"><b>匿名参加者</b><p>言葉にした瞬間、涙が出ました。</p><span class="tag">深い気づき</span></div>
+<div class="card" style="left:74%;top:58%" data-title="でたらめの力" data-body="でたらめに声を出すと、正しくしなきゃという力が抜けました。"><b>Eさん</b><p>正しくしなきゃ、が抜けました。</p><span class="tag">笑い</span></div>
+</div>
+<div class="panel note">操作イメージ：カードをクリックすると全文が開き、近いテーマのカードがふわっと明るくなる。</div>
+<div class="panel detail" id="detail"><h2></h2><p></p></div>
+<script>
+const detail=document.querySelector('#detail');
+document.querySelectorAll('.card').forEach(card=>card.onclick=()=>{document.querySelectorAll('.card').forEach(c=>c.classList.remove('open'));card.classList.add('open');detail.classList.add('show');detail.querySelector('h2').textContent=card.dataset.title;detail.querySelector('p').textContent=card.dataset.body;});
+</script></body></html>

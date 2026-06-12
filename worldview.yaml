@@ -1,0 +1,14 @@
+space_id: noby-universe
+terms:
+  star: 星
+  constellation: 星座
+  universe: 気づきの宇宙
+  nebula: 星雲
+  owner: 推し
+  content: 惑星
+messages:
+  consent_prompt: "この気づきを宇宙に掲載してもよいですか？"
+  star_born: "あなたの星が生まれました"
+  in_constellation: "あなたの星が「{constellation}」星座につながりました"
+theme:
+  primary_color: "#1a1a2e"

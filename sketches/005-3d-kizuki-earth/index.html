@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI気づきツリー｜3D気づき地球 Prototype</title>
+<style>
+:root{
+  --ink:#fff8e8;--muted:#b9c3df;--gold:#f6d36b;--aqua:#80e7ff;--green:#b7ef91;--rose:#ff9fb9;--violet:#b7a4ff;
+  --panel:rgba(10,15,32,.62);--stroke:rgba(255,255,255,.16);--shadow:0 28px 100px rgba(0,0,0,.5)
+}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',system-ui,sans-serif;color:var(--ink);background:#02040b}
+body:before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 52% 42%,rgba(54,88,181,.42),transparent 28%),radial-gradient(circle at 72% 68%,rgba(130,232,255,.13),transparent 24%),radial-gradient(circle at 28% 70%,rgba(246,211,107,.11),transparent 22%),linear-gradient(140deg,#01030a,#07122a 48%,#02040b);z-index:-3}
+body:after{content:"";position:fixed;inset:-20%;background-image:radial-gradient(rgba(255,255,255,.65) 1px,transparent 1px),radial-gradient(rgba(246,211,107,.55) 1px,transparent 1px);background-size:57px 57px,113px 113px;background-position:0 0,25px 39px;opacity:.28;animation:drift 55s linear infinite;z-index:-2}@keyframes drift{to{transform:translate(-90px,-50px)}}
+#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab}#stage:active{cursor:grabbing}.halo{position:fixed;left:50%;top:52%;width:min(72vw,820px);height:min(72vw,820px);transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(130,232,255,.12),rgba(246,211,107,.055) 42%,transparent 68%);filter:blur(18px);z-index:-1}.top{position:fixed;z-index:10;top:20px;left:22px;right:22px;display:grid;grid-template-columns:minmax(360px,540px) 1fr auto;gap:16px;align-items:start}.glass{background:linear-gradient(180deg,rgba(255,255,255,.105),rgba(255,255,255,.052));border:1px solid var(--stroke);box-shadow:var(--shadow);backdrop-filter:blur(18px) saturate(1.25);border-radius:28px}.brand{padding:18px 20px}.eyebrow{font-size:12px;color:var(--gold);font-weight:900;letter-spacing:.16em}.brand h1{font-size:clamp(26px,3.3vw,42px);line-height:1.02;margin:4px 0}.brand p{margin:0;color:#d3daf1;line-height:1.55}.modes{justify-self:center;display:flex;gap:7px;padding:10px}.btn,.chip{appearance:none;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.075);color:var(--ink);border-radius:999px;min-height:44px;padding:0 16px;font-weight:900;cursor:pointer}.btn.active,.chip.active{background:linear-gradient(135deg,var(--gold),#fff2ad);color:#1e1608;box-shadow:0 0 35px rgba(246,211,107,.28)}.tools{display:flex;gap:8px;padding:10px}.round{width:44px;padding:0;display:grid;place-items:center}.labels{position:fixed;inset:0;pointer-events:none}.label{position:absolute;z-index:7;min-width:150px;max-width:210px;padding:10px 12px;border-radius:18px;background:rgba(255,253,239,.92);color:#151923;border:1px solid rgba(255,255,255,.55);box-shadow:0 16px 50px rgba(0,0,0,.32),0 0 34px var(--c);transform:translate(-50%,-50%);transition:opacity .18s,filter .18s,transform .18s;pointer-events:auto;cursor:pointer}.label.back{opacity:.18;filter:blur(.5px);pointer-events:none}.label.hidden{opacity:0;pointer-events:none}.label.active{transform:translate(-50%,-50%) scale(1.08);box-shadow:0 28px 90px rgba(0,0,0,.45),0 0 0 2px #fff,0 0 70px var(--c)}.label b{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#604714}.label i{width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 12px var(--c)}.label p{font-size:14px;line-height:1.42;margin:6px 0 8px}.tag{font-size:11px;font-weight:900;background:color-mix(in srgb,var(--c) 28%,white);color:#111827;border-radius:999px;padding:3px 8px}.detail{position:fixed;z-index:12;right:22px;bottom:22px;width:min(440px,calc(100vw - 44px));padding:20px;opacity:0;transform:translateY(16px);pointer-events:none;transition:.32s}.detail.show{opacity:1;transform:translateY(0);pointer-events:auto}.detail .pill{display:inline-flex;background:linear-gradient(135deg,var(--gold),#fff2ad);color:#181207;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900;margin-bottom:10px}.detail h2{font-size:27px;margin:0 0 10px}.detail p{margin:0;color:#e1e7f8;line-height:1.85}.related{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.14)}.related b{color:var(--gold);font-size:13px}.related div{font-size:13px;color:#cbd4ec;margin-top:8px}.dock{position:fixed;z-index:11;left:22px;bottom:22px;width:340px;padding:16px}.dock h3{margin:0 0 10px;color:var(--gold);font-size:15px}.chips{display:flex;flex-wrap:wrap;gap:8px}.hint{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);width:min(460px,calc(100vw - 44px));padding:14px 16px;display:flex;gap:12px;align-items:flex-start;z-index:11}.ai{width:38px;height:38px;flex:0 0 auto;border-radius:14px;background:radial-gradient(circle at 30% 30%,#fff,var(--gold));color:#111;display:grid;place-items:center;font-weight:900}.hint p{margin:0;color:#dce3f8;font-size:14px;line-height:1.62}.zoom{position:fixed;z-index:11;right:22px;top:116px;padding:12px;display:grid;gap:10px}.zoom input{writing-mode:vertical-rl;width:44px;height:160px;accent-color:var(--gold)}.compass{position:fixed;z-index:11;right:22px;top:344px;width:158px;height:158px;padding:14px}.compass .earth{position:absolute;inset:22px;border-radius:50%;background:radial-gradient(circle at 35% 30%,rgba(130,232,255,.32),rgba(246,211,107,.12) 45%,rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.18)}.compass .dot{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--gold);box-shadow:0 0 12px currentColor}.mode-note{display:none}.mobile{display:none}
+@media(max-width:920px){body{overflow:auto}#stage{height:980px}.top{position:absolute;display:block}.brand{margin-bottom:10px}.modes{justify-content:flex-start;overflow:auto}.tools,.zoom,.compass,.dock,.hint,.mode-note{display:none}.detail{position:absolute;top:940px;bottom:auto}.mobile{display:block;position:absolute;top:188px;left:22px;right:22px;color:#cbd4ec}.label{max-width:170px;min-width:130px}.halo{top:510px;width:680px;height:680px}}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas><div class="halo"></div><div class="labels" id="labels"></div>
+<header class="top">
+  <section class="glass brand"><div class="eyebrow">AI KIZUKI TREE / 3D EARTH VIEW</div><h1>3D気づき宇宙</h1><p>感想が平面ではなく、ひとつの“気づきの惑星”の表面に浮かぶ。ドラッグで回し、ズームし、星を選ぶ。</p></section>
+  <nav class="glass modes"><button class="btn">読む</button><button class="btn active">3D宇宙</button><button class="btn">テーマ</button><button class="btn">AIまとめ</button></nav>
+  <div class="glass tools"><button class="btn round" id="reset">⌖</button><button class="btn round" id="auto">⟳</button><button class="btn round">↗</button></div>
+</header>
+<p class="mobile">カードをタップすると全文が開きます。PCではドラッグで惑星を回転できます。</p>
+<section class="glass mode-note">Google Earthのように、気づきの星を<strong style="color:var(--gold)">球面上に配置</strong>。奥に回った声は薄くなり、手前の声が立ち上がります。</section>
+<aside class="glass detail" id="detail"><span class="pill">星を選んでください</span><h2>気づきの全文</h2><p>ドラッグで回転し、気になる星をクリックしてください。近い気づきが線でつながります。</p><div class="related"><b>AIが見つけた近い声</b><div>選択後に関連する星が表示されます。</div></div></aside>
+<section class="glass dock"><h3>テーマフィルタ</h3><div class="chips"><button class="chip active" data-filter="all">すべて</button><button class="chip" data-filter="待つ">待つ</button><button class="chip" data-filter="身体感覚">身体感覚</button><button class="chip" data-filter="安心">安心</button><button class="chip" data-filter="笑い">笑い</button><button class="chip" data-filter="手放す">手放す</button></div></section>
+<section class="glass hint"><div class="ai">AI</div><p><strong style="color:var(--gold)">今週の星座：</strong>「待つ」と「身体のそわそわ」が惑星の近い領域に出ています。次回の問いは「待てない時、身体は何をしている？」。</p></section>
+<section class="glass zoom"><button class="btn round" id="zin">＋</button><input id="zoom" type="range" min="0.78" max="1.35" value="1" step="0.01"><button class="btn round" id="zout">−</button></section>
+<section class="glass compass"><div class="earth"></div><span class="dot" style="left:52px;top:54px;color:var(--gold)"></span><span class="dot" style="left:92px;top:42px;color:var(--aqua)"></span><span class="dot" style="left:105px;top:88px;color:var(--green)"></span><span class="dot" style="left:62px;top:105px;color:var(--rose)"></span></section>
+<script>
+const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d'),labels=document.getElementById('labels'),detail=document.getElementById('detail');
+const css=getComputedStyle(document.documentElement);const C={gold:css.getPropertyValue('--gold').trim(),aqua:css.getPropertyValue('--aqua').trim(),green:css.getPropertyValue('--green').trim(),rose:css.getPropertyValue('--rose').trim(),violet:css.getPropertyValue('--violet').trim()};
+const nodes=[
+{id:'wait',name:'Aさん',theme:'待つ',color:C.gold,lat:4,lon:-46,title:'待つことの焦り',short:'待つことが苦手だと気づいた。',body:'7回目を終えて、待つことが苦手だと気づきました。焦って相手を変えようとしていたかもしれません。',rel:['body','release']},
+{id:'body',name:'Bさん',theme:'身体感覚',color:C.aqua,lat:36,lon:24,title:'身体のそわそわ',short:'身体がそわそわする感じ。',body:'待つ時間に身体がそわそわして、胸のあたりが硬くなる感じがあります。呼吸に戻ると少し落ち着きました。',rel:['wait','breath','tear']},
+{id:'breath',name:'Cさん',theme:'安心',color:C.green,lat:8,lon:62,title:'安心に戻る呼吸',short:'笑いの呼吸で安心に戻る。',body:'笑いの呼吸をすると、思考より先に身体が安心に戻る感じがしました。',rel:['body','laugh']},
+{id:'release',name:'Dさん',theme:'手放す',color:C.rose,lat:-20,lon:-58,title:'相手を変えない',short:'相手を変えようとしていたかも。',body:'相手を変えようとしていたことに気づきました。まず自分の内側を見たいです。',rel:['wait','laugh']},
+{id:'tear',name:'匿名参加者',theme:'深い気づき',color:C.violet,lat:-42,lon:42,title:'言葉になった涙',short:'言葉にした瞬間、涙が出た。',body:'言葉にした瞬間、涙が出ました。自分でも気づいていなかった寂しさがありました。',rel:['body','release']},
+{id:'laugh',name:'Eさん',theme:'笑い',color:'#fff0a8',lat:-8,lon:88,title:'でたらめの力',short:'正しくしなきゃ、が抜けた。',body:'でたらめに声を出すと、正しくしなきゃという力が抜けました。',rel:['breath','release']},
+{id:'silence',name:'Fさん',theme:'待つ',color:C.gold,lat:-8,lon:-110,title:'沈黙の怖さ',short:'沈黙の時間が怖い。',body:'早く答えがほしい気持ちが強く、沈黙の時間が怖いのだと思いました。',rel:['wait','body']},
+{id:'soften',name:'Gさん',theme:'安心',color:C.green,lat:-48,lon:120,title:'力が抜ける',short:'身体の力が少し抜けた。',body:'話を聞いているうちに、正解を出さなくてもいいと思えて、身体の力が少し抜けました。',rel:['laugh','breath']}
+];
+let W,H,dpr=1,R=270,rotX=-0.18,rotY=-0.55,zoom=1,drag=false,last={x:0,y:0},auto=true,selected=null,filter='all';
+const labelEls=new Map();nodes.forEach(n=>{const el=document.createElement('article');el.className='label';el.style.setProperty('--c',n.color);el.innerHTML=`<b>${n.name}<i></i></b><p>${n.short}</p><span class="tag">${n.theme}</span>`;el.onclick=()=>select(n.id);labels.appendChild(el);labelEls.set(n.id,el)});
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);R=Math.min(W,H)*0.31}resize();addEventListener('resize',resize);
+function sphere(n){const lat=n.lat*Math.PI/180,lon=n.lon*Math.PI/180;let x=Math.cos(lat)*Math.sin(lon),y=Math.sin(lat),z=Math.cos(lat)*Math.cos(lon);let cy=Math.cos(rotY),sy=Math.sin(rotY),cx=Math.cos(rotX),sx=Math.sin(rotX);let x1=x*cy+z*sy,z1=-x*sy+z*cy,y1=y;let y2=y1*cx-z1*sx,z2=y1*sx+z1*cx;return{x:x1,y:y2,z:z2}}
+function project(p){const perspective=1.95/(1.95-p.z*.48);return{x:W/2+p.x*R*zoom*perspective,y:H/2+30-p.y*R*zoom*perspective,scale:perspective,z:p.z}}
+function nodeBy(id){return nodes.find(n=>n.id===id)}
+function visible(n){return filter==='all'||n.theme===filter}
+function drawPlanet(){const cx=W/2,cy=H/2+30,rr=R*zoom;const g=ctx.createRadialGradient(cx-rr*.35,cy-rr*.38,rr*.05,cx,cy,rr);g.addColorStop(0,'rgba(130,232,255,.20)');g.addColorStop(.38,'rgba(44,78,162,.19)');g.addColorStop(.72,'rgba(246,211,107,.08)');g.addColorStop(1,'rgba(255,255,255,.025)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.16)';ctx.lineWidth=1;ctx.stroke();for(let i=-60;i<=60;i+=30){ctx.beginPath();ctx.ellipse(cx,cy,rr,rr*Math.cos(i*Math.PI/180),0,0,Math.PI*2);ctx.strokeStyle='rgba(130,232,255,.08)';ctx.stroke()}for(let i=0;i<6;i++){ctx.beginPath();ctx.ellipse(cx,cy,rr,rr*.25+i*rr*.11,rotY+i*.35,0,Math.PI*2);ctx.strokeStyle='rgba(246,211,107,.065)';ctx.stroke()}}
+function drawLine(a,b,active=false){const pa=project(sphere(a)),pb=project(sphere(b));ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.strokeStyle=active?'rgba(246,211,107,.72)':'rgba(255,255,255,.12)';ctx.lineWidth=active?1.4:1;ctx.stroke()}
+function render(){
+  ctx.clearRect(0,0,W,H);
+  if(auto&&!drag)rotY+=0.0018;
+  drawPlanet();
+  nodes.forEach(n=>n.rel.forEach(id=>{if(n.id<id&&visible(n)&&visible(nodeBy(id)))drawLine(n,nodeBy(id),selected&&(selected.id===n.id||selected.id===id))}));
+  const projected=nodes.map(n=>({n,p:sphere(n)})).map(o=>({...o,s:project(o.p)}));
+  const shown=[]; const showLabels=new Set();
+  projected.slice().sort((a,b)=>b.p.z-a.p.z).forEach(o=>{
+    if(!visible(o.n)||o.p.z<=.05)return;
+    const important=selected&&selected.id===o.n.id;
+    const collides=shown.some(q=>Math.abs(q.x-o.s.x)<190&&Math.abs(q.y-o.s.y)<130);
+    if(important||!collides){showLabels.add(o.n.id);shown.push({x:o.s.x,y:o.s.y});}
+  });
+  projected.sort((a,b)=>a.p.z-b.p.z).forEach(({n,p,s})=>{
+    const el=labelEls.get(n.id);const isVisible=visible(n);const labelVisible=showLabels.has(n.id);
+    el.classList.toggle('hidden',!labelVisible);if(!isVisible)return;
+    const back=p.z<.05;el.classList.toggle('back',back);el.classList.toggle('active',selected&&selected.id===n.id);
+    el.style.left=s.x+'px';el.style.top=s.y+'px';el.style.opacity=labelVisible?Math.min(1,.58+s.scale*.32):0;
+    el.style.transform=`translate(-50%,-50%) scale(${Math.max(.72,Math.min(1.08,s.scale*.78))})`;
+    ctx.beginPath();ctx.arc(s.x,s.y,Math.max(3,6*s.scale),0,Math.PI*2);ctx.fillStyle=n.color;ctx.shadowBlur=24;ctx.shadowColor=n.color;ctx.fill();ctx.shadowBlur=0;
+  });
+  requestAnimationFrame(render)
+}render();
+function select(id){selected=nodeBy(id);detail.classList.add('show');detail.querySelector('.pill').textContent=selected.theme+' の星';detail.querySelector('h2').textContent=selected.title;detail.querySelector('p').textContent=selected.body;detail.querySelector('.related').innerHTML='<b>AIが見つけた近い声</b>'+selected.rel.map(r=>`<div>・${nodeBy(r).name}：${nodeBy(r).title}</div>`).join('')}
+canvas.addEventListener('pointerdown',e=>{drag=true;auto=false;last={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId)});canvas.addEventListener('pointermove',e=>{if(!drag)return;rotY+=(e.clientX-last.x)*.006;rotX+=(e.clientY-last.y)*.006;rotX=Math.max(-1.1,Math.min(1.1,rotX));last={x:e.clientX,y:e.clientY}});canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.78,Math.min(1.35,zoom-e.deltaY*.0007));document.getElementById('zoom').value=zoom},{passive:false});
+document.getElementById('zoom').oninput=e=>zoom=+e.target.value;document.getElementById('zin').onclick=()=>zoom=Math.min(1.35,zoom+.06);document.getElementById('zout').onclick=()=>zoom=Math.max(.78,zoom-.06);document.getElementById('reset').onclick=()=>{rotX=-.18;rotY=-.55;zoom=1};document.getElementById('auto').onclick=()=>auto=!auto;
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));c.classList.add('active');filter=c.dataset.filter;});
+</script>
+</body>
+</html>
