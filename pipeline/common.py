@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -10,6 +11,73 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if DATABASE_URL:
+    import psycopg2
+    import psycopg2.extras
+
+    class _DictRow(dict):
+        def __getitem__(self, key):
+            if isinstance(key, int):
+                return list(self.values())[key]
+            return super().__getitem__(key)
+
+    class _PgCursor:
+        def __init__(self, cur):
+            self._cur = cur
+
+        def fetchone(self):
+            row = self._cur.fetchone()
+            return _DictRow(row) if row else None
+
+        def fetchall(self):
+            return [_DictRow(r) for r in self._cur.fetchall()]
+
+        def __iter__(self):
+            for row in self._cur:
+                yield _DictRow(row)
+
+    class _PgConn:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=()):
+            sql = sql.replace("?", "%s")
+            sql = re.sub(r"INSERT OR IGNORE INTO", "INSERT INTO", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"INSERT OR REPLACE INTO", "INSERT INTO", sql, flags=re.IGNORECASE)
+            if re.search(r"^INSERT INTO", sql.strip(), re.IGNORECASE) and "ON CONFLICT" not in sql.upper():
+                sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+            cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, tuple(params))
+            return _PgCursor(cur)
+
+        def executescript(self, script):
+            cur = self._conn.cursor()
+            for stmt in script.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    cur.execute(stmt)
+
+        def commit(self):
+            self._conn.commit()
+
+        def rollback(self):
+            self._conn.rollback()
+
+        def close(self):
+            self._conn.close()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, *_):
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+            self._conn.close()
 DEFAULT_DB_PATH = ROOT / "data" / "kizuki_tree.sqlite3"
 DEFAULT_WORLDVIEW_PATH = ROOT / "worldview.yaml"
 DEFAULT_SPACE_ID = "noby-universe"
@@ -63,7 +131,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def connect(db_path: str | Path = DEFAULT_DB_PATH):
+    if DATABASE_URL:
+        return _PgConn(psycopg2.connect(DATABASE_URL))
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -142,7 +212,13 @@ def worldview_message(key: str, default: str = "", **values) -> str:
         return text
 
 
-def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+def table_columns(conn, table: str) -> set[str]:
+    if DATABASE_URL:
+        cur = conn.execute(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_name = ? AND table_schema = 'public'",
+            (table,),
+        )
+        return {row["name"] for row in cur}
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
