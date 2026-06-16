@@ -4,6 +4,8 @@
 !.env.example
 
 # データベース（参加者の声・個人情報を含む）
+*.db
+*.sqlite3
 data/*.sqlite3
 data/*.sqlite3.backup-*
 data/*.before_*
