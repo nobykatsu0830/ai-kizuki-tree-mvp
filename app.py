@@ -640,7 +640,7 @@ def public_page() -> bytes:
       <div class="stats">
         <div class="card stat"><b>{len(roots)}</b><span>{esc(star)}</span></div>
         <div class="card stat"><b>{len(consts)}</b><span>{esc(constellation)}</span></div>
-        <div class="card stat"><b>{voice_count}</b><span>寄せられた声</span></div>
+        <div class="card stat"><b>{voice_count}</b><span>返信の声</span></div>
       </div>
     </header>
     {question_section}
