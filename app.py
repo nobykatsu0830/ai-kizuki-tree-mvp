@@ -770,13 +770,28 @@ const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
 const labels=document.getElementById('labels'),detail=document.getElementById('detail'),chips=document.getElementById('chips'),filterStatus=document.getElementById('filterStatus');
 const colors=['#ffe9b0','#9fd9c9','#bfaef2','#f2a9b8','#9cc6ff','#f0c869'];
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
-let W,H,dpr=1,R=270,rotX=-.18,rotY=-.55,zoom=1,drag=false,moved=false,last={x:0,y:0},selected=null,filter='all';
+let W,H,dpr=1,R=270,rotX=-.18,rotY=-.55,zoom=1,drag=false,moved=false,last={x:0,y:0},selected=null,filter='all',rafId=null;
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function color(n){return colors[Math.abs([...n.id].reduce((a,c)=>a+c.charCodeAt(0),0))%colors.length]}
 const allTags=[...new Set(nodes.flatMap(n=>n.tags&&n.tags.length?n.tags:['未分類']))];
 allTags.forEach(t=>{const b=document.createElement('button');b.className='chip';b.dataset.tag=t;b.textContent=t;b.onclick=()=>setFilter(t,b);chips.appendChild(b)});
 document.querySelector('.chip[data-tag="all"]').onclick=function(){setFilter('all',this)};
-function setFilter(t,b){filter=t;selected=null;detail.classList.remove('show');document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));b.classList.add('active');const count=nodes.filter(n=>visible(n)).length;filterStatus.textContent=t==='all'?`すべての${STAR_TERM}を表示中（${count}件）`:`${t} の${STAR_TERM}だけを表示中（${count}件）`}
+function setFilter(t,b){
+  filter=t;selected=null;detail.classList.remove('show');
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  // ラベルを即時更新（RAFループ待ちにしない）
+  labelEls.forEach((el,id)=>{
+    const n=nodes.find(x=>x.id===id);
+    if(!n){el.classList.add('hidden');return;}
+    el.classList.toggle('hidden',!visible(n));
+  });
+  const count=nodes.filter(n=>visible(n)).length;
+  filterStatus.textContent=t==='all'?`すべての${STAR_TERM}を表示中（${count}件）`:`${t} の${STAR_TERM}だけを表示中（${count}件）`;
+  // RAF ループが止まっていた場合に備えて強制再起動
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(render);
+}
 const labelEls=new Map();
 nodes.forEach(n=>{
  const el=document.createElement('article');el.className='label';el.style.setProperty('--c',color(n)+'55');
@@ -839,8 +854,8 @@ function render(){ctx.clearRect(0,0,W,H);
   el.style.opacity=labelVisible?Math.min(1,.55+s.scale*.34):0;
   const isSel=selected&&selected.id===n.id;
   drawStar(s.x,s.y,Math.max(2.2,4.6*s.scale)*(isSel?1.5:1),color(n),isSel||p.z>.72)});
- requestAnimationFrame(render)}
-render();
+ rafId=requestAnimationFrame(render)}
+rafId=requestAnimationFrame(render);
 function select(id){selected=nodeBy(id);if(!selected)return;
  const constellation=selected.constellation_name?`<p class="meta">☄ ${escapeHtml(selected.constellation_name)}</p>`:'';
  const reply=selected.reply_to?`<p class="meta">↪ ${escapeHtml(selected.reply_to)}への返信</p>`:'';
