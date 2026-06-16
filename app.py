@@ -516,6 +516,10 @@ a{color:var(--teal)}
 .q-label{color:var(--gold);letter-spacing:.34em;font-size:11.5px;font-weight:700}
 .question-card .q{font-family:var(--serif);font-size:clamp(19px,3vw,24px);line-height:2;color:#f6f3e7;margin:12px 0 4px}
 .const-card h3{color:var(--gold-soft);margin:0 0 4px}
+.const-lead{margin:6px 0 8px;color:var(--dim);font-size:.9em}
+.const-bullets{margin:8px 0 0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.const-bullets li{font-size:.88em;line-height:1.6;padding:8px 10px;background:rgba(255,255,255,.04);border-left:2px solid var(--gold);border-radius:0 6px 6px 0}
+.const-who{display:inline-block;font-size:.8em;color:var(--gold);margin-right:6px;font-weight:600}
 .const-week{font-size:12px;color:var(--dim);letter-spacing:.14em}
 .empty{text-align:center;padding:64px 20px}
 .empty .star-dot{margin:0 auto 20px;width:14px;height:14px}
@@ -620,12 +624,36 @@ def public_page() -> bytes:
                 f'<a class="btn ghost small" href="/submit">この問いに{esc(star)}で応える</a></section>'
             )
 
+    def render_summary(summary_md: str) -> str:
+        lines = summary_md.strip().splitlines()
+        out = []
+        bullets = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("- "):
+                content = line[2:].strip()
+                if ":" in content:
+                    who, _, rest = content.partition(":")
+                    bullets.append(f'<li><span class="const-who">{esc(who.strip())}</span>{esc(rest.strip()[:80])}{"…" if len(rest.strip()) > 80 else ""}</li>')
+                else:
+                    bullets.append(f'<li>{esc(content)}</li>')
+            else:
+                if bullets:
+                    out.append(f'<ul class="const-bullets">{"".join(bullets)}</ul>')
+                    bullets = []
+                out.append(f'<p class="const-lead">{esc(line)}</p>')
+        if bullets:
+            out.append(f'<ul class="const-bullets">{"".join(bullets)}</ul>')
+        return "".join(out)
+
     const_section = ""
     if consts:
         const_cards = "".join(
             f'<section class="card const-card"><h3>{esc(c["name"])}</h3>'
             f'<div class="const-week">{esc(c["week_of"])} の週</div>'
-            f'<p>{esc(c["summary_md"])}</p></section>'
+            f'{render_summary(c["summary_md"])}</section>'
             for c in consts[:3]
         )
         const_section = f'<h2>いま生まれている{esc(constellation)}</h2><div class="grid">{const_cards}</div>'
