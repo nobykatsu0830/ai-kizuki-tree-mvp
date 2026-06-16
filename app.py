@@ -875,7 +875,7 @@ canvas.addEventListener('pointerdown',e=>{drag=true;moved=false;last={x:e.client
 canvas.addEventListener('pointermove',e=>{if(!drag)return;moved=true;
  rotY+=(e.clientX-last.x)*.006;rotX+=(e.clientY-last.y)*.006;
  rotX=Math.max(-1.1,Math.min(1.1,rotX));last={x:e.clientX,y:e.clientY}});
-canvas.addEventListener('pointerup',()=>{drag=false});
+canvas.addEventListener('pointerup',e=>{if(!moved){selected=null;detail.classList.remove('show')}drag=false;});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.74,Math.min(1.4,zoom-e.deltaY*.0007))},{passive:false});
 document.getElementById('zin').onclick=()=>zoom=Math.min(1.4,zoom+.08);
 document.getElementById('zout').onclick=()=>zoom=Math.max(.74,zoom-.08);
