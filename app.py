@@ -910,14 +910,15 @@ def submit_page(parent_id: str = "") -> bytes:
     reply_note = (
         f'<p class="small">選んだ{esc(star)}への返信として届きます。</p>' if parent_id else ""
     )
+    sent_banner = '<div class="card notice" style="border-color:var(--gold)">✦ あなたの星が宇宙に灯りました。ありがとうございます。</div>' if "" else ""
     body = f'''
     <h1>{esc(star)}を送る</h1>
-    <div class="card notice">ふだんは公式LINEにメッセージを送るだけで、あなたの気づきがこの宇宙の{esc(star)}になります。掲載は「名前あり・匿名・掲載しない」から選べて、掲載OK後すぐに灯ります。<span class="small">（このフォームは動作確認用の入口です）</span></div>
-    <form class="card" method="post" action="/api/line-webhook">
+    <div class="card notice">あなたの気づきが、この宇宙の{esc(star)}になります。送信後すぐに公開ページに灯ります。<br><span class="small">LINEからも送れます。LINEの場合は「名前あり・匿名・掲載しない」を選択できます。</span></div>
+    <form class="card" method="post" action="/submit">
       <input type="hidden" name="parent_id" value="{esc(parent_id)}">
       {reply_note}
-      <p><label>表示名<br><input name="display_name" value="参加者"></label></p>
-      <p><label>気づき・感想・問い<br><textarea name="body" rows="5" placeholder="いま心に残っていることを、そのままの言葉で"></textarea></label></p>
+      <p><label>表示名（省略すると匿名になります）<br><input name="display_name" placeholder="例：ノビー"></label></p>
+      <p><label>気づき・感想・問い<br><textarea name="body" rows="5" placeholder="いま心に残っていることを、そのままの言葉で" required></textarea></label></p>
       <p><button>{esc(star)}として送る</button></p>
     </form>
     '''
@@ -1622,6 +1623,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/api/line-webhook", "/webhook/line"):
             self.handle_line_webhook(self.read_raw())
+        elif path == "/submit":
+            data = self.read_form_or_json()
+            display_name = (data.get("display_name") or "").strip() or "匿名参加者"
+            body = (data.get("body") or "").strip()
+            if not body:
+                self.redirect("/submit?error=empty")
+                return
+            parent_id = (data.get("parent_id") or "").strip() or None
+            insert_reflection("web", display_name, body, parent_id=parent_id, status="approved")
+            self.redirect("/?sent=1")
         elif path == "/api/admin/approve":
             data = self.read_form_or_json()
             approve(data.get("id", ""))
