@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import app
+import batch_classify
 from pipeline import common as pipeline_common
 from pipeline import export_obsidian
 
@@ -255,6 +256,65 @@ class LineWebhookHelpersTest(unittest.TestCase):
                 self.assertNotIn("未分類", names)
             finally:
                 app.DB_PATH = original_db_path
+
+    def test_batch_clean_themes_dedupes_caps_and_handles_empty(self):
+        self.assertEqual(batch_classify.clean_themes(["待つ", "待つ", "安心"]), ["待つ", "安心"])
+        self.assertEqual(batch_classify.clean_themes(["a", "b", "c", "d"]), ["a", "b", "c"])
+        self.assertEqual(batch_classify.clean_themes(["未分類", ""]), ["未分類"])
+        self.assertEqual(batch_classify.clean_themes([]), ["未分類"])
+
+    def test_batch_parse_result_json_handles_noise(self):
+        self.assertEqual(
+            batch_classify._parse_result_json('説明文 {"results":[{"id":"x","themes":["笑い"]}]} 末尾'),
+            {"results": [{"id": "x", "themes": ["笑い"]}]},
+        )
+        self.assertEqual(batch_classify._parse_result_json("これはJSONではない"), {"results": []})
+
+    def test_batch_build_prompt_lists_existing_themes_and_posts(self):
+        rows = [{"id": "r1", "body": "待つことが苦手だと気づいた"}]
+        prompt = batch_classify.build_prompt(["待つ", "安心"], rows)
+        self.assertIn("既存のテーマ: 待つ、安心", prompt)
+        self.assertIn("id: r1", prompt)
+        self.assertIn("待つことが苦手", prompt)
+
+    def test_batch_apply_classification_updates_tags_themes_and_marks_done(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "kizuki_tree.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    ("b1", "line", "Aさん", "ジブリッシュで笑った", json.dumps(["未分類"], ensure_ascii=False),
+                     "approved", pipeline_common.now_iso(), pipeline_common.default_space_id(), "insight", "universe"),
+                )
+            # codexが返したと想定した結果を適用
+            with pipeline_common.connect(db_path) as conn:
+                updated = batch_classify.apply_classification(conn, [{"id": "b1", "themes": ["笑い", "解放感"]}])
+            self.assertEqual(updated, 1)
+            with pipeline_common.connect(db_path) as conn:
+                row = conn.execute("SELECT tags, themed_at FROM reflections WHERE id='b1'").fetchone()
+                names = pipeline_common.active_theme_names(conn)
+            self.assertEqual(json.loads(row["tags"]), ["笑い", "解放感"])
+            self.assertTrue(row["themed_at"])  # 処理済みの印
+            self.assertIn("解放感", names)  # 新テーマが語彙に創発
+
+    def test_batch_pending_rows_excludes_already_themed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "kizuki_tree.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                for rid, themed in (("p1", None), ("p2", pipeline_common.now_iso())):
+                    conn.execute(
+                        "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility, themed_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (rid, "web", "X", "本文", "[]", "approved", pipeline_common.now_iso(),
+                         pipeline_common.default_space_id(), "insight", "universe", themed),
+                    )
+            with pipeline_common.connect(db_path) as conn:
+                ids = [r["id"] for r in batch_classify.pending_rows(conn, 10)]
+            self.assertIn("p1", ids)
+            self.assertNotIn("p2", ids)  # 既に分類済みは対象外
 
     def test_get_line_profile_name_returns_empty_without_token_or_user(self):
         original = os.environ.pop("LINE_CHANNEL_ACCESS_TOKEN", None)

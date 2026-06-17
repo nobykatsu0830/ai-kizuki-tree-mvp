@@ -366,6 +366,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "reflections", "visibility", "TEXT NOT NULL DEFAULT 'universe'")
         ensure_column(conn, "reflections", "embedding_json", "TEXT")
         ensure_column(conn, "reflections", "constellation_id", "TEXT")
+        ensure_column(conn, "reflections", "themed_at", "TEXT")  # LLMバッチ分類済みの印（NULL=未処理）
         conn.execute(
             "INSERT OR IGNORE INTO spaces (id, name, worldview_path, created_at) VALUES (?, ?, ?, ?)",
             (space_id, str(worldview.get("terms", {}).get("universe", "気づきの宇宙")), "worldview.yaml", now_iso()),
