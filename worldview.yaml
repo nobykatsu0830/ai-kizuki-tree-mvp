@@ -10,5 +10,11 @@ messages:
   consent_prompt: "この気づきを宇宙に掲載してもよいですか？"
   star_born: "あなたの星が生まれました"
   in_constellation: "あなたの星が「{constellation}」星座につながりました"
+# 公開ページの参加CTA。未設定なら内部の /submit にフォールバックする。
+# 講座LPや公式LINEの友だち追加URLに向けたい時はここを設定する（世界展開時はスペースごとに差し替え可）。
+# cta:
+#   join_label: 笑いの教養講座を見る
+#   join_url: https://nippon-warai.vercel.app
+#   join_note: 講座で生まれた気づきが、この宇宙の星になります。
 theme:
   primary_color: "#1a1a2e"

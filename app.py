@@ -536,6 +536,12 @@ label{font-size:13.5px;color:var(--dim);letter-spacing:.08em}
 .pre{white-space:pre-wrap;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:14px;padding:14px;font-size:14px}
 .small{color:var(--dim);font-size:13px}
 details>summary{cursor:pointer;color:var(--gold-soft)}
+.joincta{margin-top:64px;text-align:center;padding:44px 28px;border-color:rgba(238,201,111,.32);background:linear-gradient(168deg,rgba(238,201,111,.1),rgba(238,201,111,.025))}
+.joincta .kicker{display:block;margin-bottom:10px}
+.joincta h2{margin:0 0 12px;border:0}
+.joincta h2::before{content:none}
+.joincta .lead{margin:0 auto 26px}
+.joincta .cta{margin:0;justify-content:center}
 .cosmos-footer{margin-top:72px;text-align:center;color:var(--dim);font-size:13px;letter-spacing:.08em}
 .cosmos-footer a{color:rgba(255,255,255,.32);text-decoration:none;font-size:12px}
 :focus-visible{outline:2px solid var(--gold);outline-offset:3px}
@@ -587,6 +593,7 @@ def public_page() -> bytes:
     universe = pipeline_common.worldview_term("universe", "気づきの宇宙")
     star = pipeline_common.worldview_term("star", "星")
     constellation = pipeline_common.worldview_term("constellation", "星座")
+    cta = pipeline_common.worldview_cta()
     all_rows = rows("approved")
     by_parent: dict[str | None, list[sqlite3.Row]] = {}
     for r in all_rows:
@@ -669,7 +676,7 @@ def public_page() -> bytes:
       <h1>{esc(universe)}</h1>
       <p class="tagline">あなたの気づきが、{esc(star)}になる。</p>
       <p class="lead">講座で生まれた気づき・感想・問いがこの宇宙にアップされ、ひとつひとつが{esc(star)}として灯ります。{esc(star)}と{esc(star)}はAIによって結ばれて{esc(constellation)}になり、そこから次の問いが生まれていきます。</p>
-      <div class="cta"><a class="btn" href="/cosmos">宇宙を旅する</a><a class="btn ghost" href="/questions">問いを見る</a><a class="btn ghost" href="/submit">{esc(star)}を送る</a></div>
+      <div class="cta"><a class="btn" href="/cosmos">宇宙を旅する</a><a class="btn ghost" href="{esc(cta["join_url"])}">{esc(cta["join_label"])}</a></div>
       <div class="stats">
         <div class="card stat"><b>{len(roots)}</b><span>{esc(star)}</span></div>
         <div class="card stat"><b>{len(consts)}</b><span>{esc(constellation)}</span></div>
@@ -680,6 +687,12 @@ def public_page() -> bytes:
     {const_section}
     <h2>みんなの{esc(star)}</h2>
     {stars_section}
+    <section class="card joincta">
+      <span class="kicker">Join the Universe</span>
+      <h2>あなたの気づきも、ひとつの{esc(star)}になる</h2>
+      <p class="lead">{esc(cta["join_note"])}</p>
+      <div class="cta"><a class="btn" href="{esc(cta["join_url"])}">{esc(cta["join_label"])}</a><a class="btn ghost" href="/cosmos">まず宇宙を旅する</a></div>
+    </section>
     '''
     return layout("みんなの" + star, body)
 
@@ -749,6 +762,12 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 .cmd{display:flex;gap:8px;align-items:center;margin-top:14px;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:12px;color:var(--gold-soft);word-break:break-all}
 .cmd button{flex:none;appearance:none;border:1px solid rgba(238,201,111,.5);background:none;color:var(--gold-soft);border-radius:999px;padding:4px 12px;font-size:11.5px;font-weight:700;cursor:pointer}
 .cmd button:hover{background:rgba(238,201,111,.15)}
+.cosmos-empty{position:fixed;inset:0;z-index:8;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;pointer-events:none}
+.cosmos-empty.show{display:flex}
+.cosmos-empty .seed{width:14px;height:14px;border-radius:50%;background:var(--gold-soft);box-shadow:0 0 22px 5px rgba(255,233,176,.7);margin-bottom:28px;animation:epulse 3.6s ease-in-out infinite}
+@keyframes epulse{50%{box-shadow:0 0 32px 9px rgba(255,233,176,.95)}}
+.cosmos-empty p{font-family:var(--serif);font-size:clamp(17px,3.4vw,23px);line-height:2.25;color:var(--gold-soft);letter-spacing:.12em;margin:0 0 32px;text-shadow:0 0 30px rgba(238,201,111,.32);max-width:18em}
+.cosmos-empty .bn{pointer-events:auto}
 :focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media(max-width:680px){
@@ -763,6 +782,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 <div class="sky"></div><div class="stars"></div><div class="stars stars2"></div>
 <canvas id="stage"></canvas>
 <div class="labels" id="labels"></div>
+<div class="cosmos-empty" id="cosmosEmpty"><span class="seed"></span><p>この宇宙は、まだ夜の底にある。<br>最初のひとつぶの光を、あなたが灯す。</p><a class="bn gold" href="/submit">最初の__STAR__を送る</a></div>
 <header class="hud-brand glass"><a href="/">← __UNIVERSE__にもどる</a><h1>宇宙を旅する</h1><p class="hint">ドラッグで回す ・ ホイールでズーム ・ __STAR__を選ぶ</p></header>
 <nav class="hud-nav glass"><a class="bn gold" href="/submit">__STAR__を送る</a></nav>
 <section class="dock glass"><h3>テーマでたどる</h3><p class="filter-status" id="filterStatus">すべての星を表示中</p><div class="chips" id="chips"><button class="chip active" data-tag="all">すべて</button></div></section>
@@ -782,14 +802,13 @@ const allTags=[...new Set(nodes.flatMap(n=>n.tags&&n.tags.length?n.tags:['未分
 allTags.forEach(t=>{const b=document.createElement('button');b.className='chip';b.dataset.tag=t;b.textContent=t;b.onclick=()=>setFilter(t,b);chips.appendChild(b)});
 document.querySelector('.chip[data-tag="all"]').onclick=function(){setFilter('all',this)};
 function setFilter(t,b){
-  filter=t;selected=null;detail.classList.remove('show');
+  filter=t;selected=null;setActiveLabel(null);detail.classList.remove('show');
   document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
-  // ラベルを即時更新（RAFループ待ちにしない）
+  // フィルタ外のラベルを即時に隠す（_shown状態も同期し、renderの差分更新と矛盾させない）
   labelEls.forEach((el,id)=>{
-    const n=nodes.find(x=>x.id===id);
-    if(!n){el.classList.add('hidden');return;}
-    el.classList.toggle('hidden',!visible(n));
+    const n=nodeMap.get(id);
+    if(!n||!visible(n)){el.classList.add('hidden');el.style.opacity='0';el._shown=false;}
   });
   const count=nodes.filter(n=>visible(n)).length;
   filterStatus.textContent=t==='all'?`すべての${STAR_TERM}を表示中（${count}件）`:`${t} の${STAR_TERM}だけを表示中（${count}件）`;
@@ -802,6 +821,8 @@ nodes.forEach(n=>{
  const el=document.createElement('article');el.className='label';el.style.setProperty('--c',color(n)+'55');
  el.innerHTML=`<b>${escapeHtml(n.name)}</b><p>${escapeHtml(n.body.slice(0,56))}${n.body.length>56?'…':''}</p><span class="tag">${escapeHtml((n.tags&&n.tags[0])||'未分類')}</span>`;
  el.onclick=()=>select(n.id);labels.appendChild(el);labelEls.set(n.id,el)});
+if(!nodes.length){document.getElementById('cosmosEmpty').classList.add('show');
+ document.querySelector('.dock').style.display='none';document.querySelector('.zoomers').style.display='none';}
 function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);R=Math.min(W,H)*.32}
 resize();addEventListener('resize',resize);
 function sphere(n){const lat=(n.lat||0)*Math.PI/180,lon=(n.lon||0)*Math.PI/180;
@@ -812,7 +833,9 @@ function sphere(n){const lat=(n.lat||0)*Math.PI/180,lon=(n.lon||0)*Math.PI/180;
 function project(p){const per=1.95/(1.95-p.z*.48);return{x:W/2+p.x*R*zoom*per,y:H/2+14-p.y*R*zoom*per,scale:per,z:p.z}}
 function visible(n){return filter==='all'||(n.tags||[]).includes(filter)}
 filterStatus.textContent=`すべての${STAR_TERM}を表示中（${nodes.length}件）`;
-function nodeBy(id){return nodes.find(n=>n.id===id)}
+const nodeMap=new Map(nodes.map(n=>[n.id,n]));
+function nodeBy(id){return nodeMap.get(id)}
+function setActiveLabel(id){labelEls.forEach((el,k)=>el.classList.toggle('active',k===id))}
 const constellationGroups=[...nodes.reduce((m,n)=>{if(n.constellation_id){if(!m.has(n.constellation_id))m.set(n.constellation_id,[]);m.get(n.constellation_id).push(n)}return m},new Map()).values()];
 function drawCore(){const cx=W/2,cy=H/2+14,rr=R*zoom;
  let g=ctx.createRadialGradient(cx,cy,rr*.02,cx,cy,rr*1.06);
@@ -820,7 +843,7 @@ function drawCore(){const cx=W/2,cy=H/2+14,rr=R*zoom;
  ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,rr*1.06,0,Math.PI*2);ctx.fill();
  ctx.strokeStyle='rgba(160,200,255,.07)';ctx.lineWidth=1;
  for(let i=-60;i<=60;i+=30){ctx.beginPath();ctx.ellipse(cx,cy,rr,Math.abs(rr*Math.cos(i*Math.PI/180)),0,0,Math.PI*2);ctx.stroke()}}
-function drawLine(a,b,active){const pa=project(sphere(a)),pb=project(sphere(b));
+function drawLineP(a,b,active){const pa=a&&a._s,pb=b&&b._s;if(!pa||!pb)return;
  const g=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
  if(active){g.addColorStop(0,'rgba(238,201,111,.95)');g.addColorStop(1,'rgba(255,233,176,.6)')}
  else{g.addColorStop(0,'rgba(255,255,255,.16)');g.addColorStop(1,'rgba(255,255,255,.08)')}
@@ -834,34 +857,44 @@ function drawStar(x,y,r,c,bright){
  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,Math.max(1.4,r*.62),0,Math.PI*2);ctx.fill();
  if(bright){ctx.strokeStyle=c;ctx.lineWidth=1;ctx.globalAlpha=.85;
   ctx.beginPath();ctx.moveTo(x-r*5,y);ctx.lineTo(x+r*5,y);ctx.moveTo(x,y-r*5);ctx.lineTo(x,y+r*5);ctx.stroke();ctx.globalAlpha=1}}
+const order=nodes.slice();
 function render(){ctx.clearRect(0,0,W,H);
  if(!drag&&!reduceMotion)rotY+=.0012;
  drawCore();
+ // 1フレームにつき1回だけ球面→投影を計算し、ノードにキャッシュする
+ for(let i=0;i<nodes.length;i++){const n=nodes[i];n._p=sphere(n);n._s=project(n._p);}
+ // 星座の線（キャッシュ済み座標を参照）
  constellationGroups.forEach(group=>{for(let i=1;i<group.length;i++){const a=group[i-1],b=group[i];
-  if(visible(a)&&visible(b))drawLine(a,b,selected&&selected.constellation_id===a.constellation_id)}});
- nodes.forEach(n=>{if(n.parent_id){const p=nodeBy(n.parent_id);
-  if(p&&visible(n)&&visible(p))drawLine(n,p,selected&&(selected.id===n.id||selected.id===p.id))}});
- const projected=nodes.map(n=>({n,p:sphere(n)})).map(o=>({...o,s:project(o.p)}));
+  if(visible(a)&&visible(b))drawLineP(a,b,selected&&selected.constellation_id===a.constellation_id)}});
+ // 親子の返信線（nodeMapでO(1)参照）
+ for(let i=0;i<nodes.length;i++){const n=nodes[i];if(n.parent_id){const p=nodeMap.get(n.parent_id);
+  if(p&&visible(n)&&visible(p))drawLineP(n,p,selected&&(selected.id===n.id||selected.id===p.id))}}
+ // 手前から奥へソートしてラベルの衝突判定
+ order.sort((a,b)=>b._p.z-a._p.z);
  const shown=[],showLabels=new Set();
- projected.slice().sort((a,b)=>b.p.z-a.p.z).forEach(o=>{
-  if(!visible(o.n)||o.p.z<=.05)return;
-  const important=selected&&selected.id===o.n.id;
-  const collides=shown.some(q=>Math.abs(q.x-o.s.x)<170&&Math.abs(q.y-o.s.y)<116);
-  if(important||!collides){showLabels.add(o.n.id);shown.push({x:o.s.x,y:o.s.y})}});
- projected.sort((a,b)=>a.p.z-b.p.z).forEach(({n,p,s})=>{
-  const el=labelEls.get(n.id),labelVisible=showLabels.has(n.id);
-  el.classList.toggle('hidden',!labelVisible||!visible(n));
-  el.classList.toggle('active',!!(selected&&selected.id===n.id));
-  if(!visible(n))return;
-  el.style.left=s.x+'px';el.style.top=s.y+'px';
-  const tagEl=el.querySelector('.tag');
-  if(tagEl)tagEl.textContent=filter!=='all'&&(n.tags||[]).includes(filter)?filter:((n.tags&&n.tags[0])||'未分類');
-  el.style.opacity=labelVisible?Math.min(1,.55+s.scale*.34):0;
+ for(let i=0;i<order.length;i++){const n=order[i];
+  if(!visible(n)||n._p.z<=.05)continue;
+  const important=selected&&selected.id===n.id;
+  let collides=false;
+  for(let j=0;j<shown.length;j++){if(Math.abs(shown[j].x-n._s.x)<170&&Math.abs(shown[j].y-n._s.y)<116){collides=true;break;}}
+  if(important||!collides){showLabels.add(n.id);shown.push({x:n._s.x,y:n._s.y})}}
+ // 奥から手前へ描画（星は重なり順、ラベルは表示分だけDOM更新）
+ order.sort((a,b)=>a._p.z-b._p.z);
+ for(let i=0;i<order.length;i++){const n=order[i],s=n._s,el=labelEls.get(n.id);
+  const vis=visible(n),labelVisible=vis&&showLabels.has(n.id);
+  if(labelVisible){
+   if(el._shown!==true){el.classList.remove('hidden');el._shown=true;}
+   el.style.left=s.x+'px';el.style.top=s.y+'px';
+   const tagEl=el.querySelector('.tag');
+   if(tagEl)tagEl.textContent=filter!=='all'&&(n.tags||[]).includes(filter)?filter:((n.tags&&n.tags[0])||'未分類');
+   el.style.opacity=Math.min(1,.55+s.scale*.34);
+  }else if(el._shown!==false){el.classList.add('hidden');el.style.opacity='0';el._shown=false;}
+  if(!vis)continue;
   const isSel=selected&&selected.id===n.id;
-  drawStar(s.x,s.y,Math.max(2.2,4.6*s.scale)*(isSel?1.5:1),color(n),isSel||p.z>.72)});
+  drawStar(s.x,s.y,Math.max(2.2,4.6*s.scale)*(isSel?1.5:1),color(n),isSel||n._p.z>.72)}
  rafId=requestAnimationFrame(render)}
 rafId=requestAnimationFrame(render);
-function select(id){selected=nodeBy(id);if(!selected)return;
+function select(id){selected=nodeBy(id);if(!selected)return;setActiveLabel(id);
  const constellation=selected.constellation_name?`<p class="meta">☄ ${escapeHtml(selected.constellation_name)}</p>`:'';
  const reply=selected.reply_to?`<p class="meta">↪ ${escapeHtml(selected.reply_to)}への返信</p>`:'';
  detail.innerHTML=`<button class="close" aria-label="閉じる">×</button>
@@ -871,7 +904,7 @@ function select(id){selected=nodeBy(id);if(!selected)return;
   <p class="hint">気づきが生まれたら、そのまま公式LINEに送るだけで宇宙に反映されます。特定の星に応えたい時だけ、下の返信用テキストを使ってください。</p>
   <div class="cmd"><span>この星に応える時だけ：返信:${escapeHtml(selected.id)} あなたの言葉</span><button id="copycmd">コピー</button></div>`;
  detail.classList.add('show');
- detail.querySelector('.close').onclick=()=>{selected=null;detail.classList.remove('show')};
+ detail.querySelector('.close').onclick=()=>{selected=null;setActiveLabel(null);detail.classList.remove('show')};
  const cp=detail.querySelector('#copycmd');
  cp.onclick=()=>{const txt='返信:'+selected.id+' ';
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(()=>{cp.textContent='コピーしました';setTimeout(()=>cp.textContent='コピー',1600)})}
@@ -880,7 +913,7 @@ canvas.addEventListener('pointerdown',e=>{drag=true;moved=false;last={x:e.client
 canvas.addEventListener('pointermove',e=>{if(!drag)return;moved=true;
  rotY+=(e.clientX-last.x)*.006;rotX+=(e.clientY-last.y)*.006;
  rotX=Math.max(-1.1,Math.min(1.1,rotX));last={x:e.clientX,y:e.clientY}});
-canvas.addEventListener('pointerup',e=>{if(!moved){selected=null;detail.classList.remove('show')}drag=false;});
+canvas.addEventListener('pointerup',e=>{if(!moved){selected=null;setActiveLabel(null);detail.classList.remove('show')}drag=false;});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.74,Math.min(1.4,zoom-e.deltaY*.0007))},{passive:false});
 document.getElementById('zin').onclick=()=>zoom=Math.min(1.4,zoom+.08);
 document.getElementById('zout').onclick=()=>zoom=Math.max(.74,zoom-.08);

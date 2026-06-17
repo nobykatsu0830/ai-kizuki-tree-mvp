@@ -121,9 +121,62 @@ class LineWebhookHelpersTest(unittest.TestCase):
     def test_cosmos_filter_clears_selected_detail_and_keeps_autorotation(self):
         shell = app.COSMOS_SHELL
 
-        self.assertIn("selected=null;detail.classList.remove('show')", shell)
+        self.assertIn("selected=null;setActiveLabel(null);detail.classList.remove('show')", shell)
         self.assertIn("if(!drag&&!reduceMotion)rotY+=", shell)
         self.assertIn("tagEl.textContent=filter!=='all'", shell)
+
+    def test_cosmos_shell_has_empty_state_overlay(self):
+        shell = app.COSMOS_SHELL
+
+        # 星0件のときに詩的な空状態オーバーレイを表示する
+        self.assertIn('id="cosmosEmpty"', shell)
+        self.assertIn("この宇宙は、まだ夜の底にある。", shell)
+        self.assertIn("if(!nodes.length){document.getElementById('cosmosEmpty').classList.add('show')", shell)
+
+    def test_cosmos_shell_caches_projection_for_performance(self):
+        shell = app.COSMOS_SHELL
+
+        # O(1)の親参照（nodeMap）と1フレーム1回の投影キャッシュを使う
+        self.assertIn("const nodeMap=new Map(nodes.map(n=>[n.id,n]))", shell)
+        self.assertIn("n._p=sphere(n);n._s=project(n._p)", shell)
+        # キャッシュ座標を使う線描画関数に置き換わっている
+        self.assertIn("function drawLineP(", shell)
+        self.assertNotIn("project(sphere(a)),pb=project(sphere(b))", shell)
+
+    def test_worldview_cta_defaults_to_internal_submit(self):
+        cta = pipeline_common.worldview_cta()
+
+        self.assertEqual(cta["join_url"], "/submit")
+        self.assertTrue(cta["join_label"])
+        self.assertTrue(cta["join_note"])
+
+    def test_worldview_cta_is_overridable_for_world_expansion(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wv_path = Path(tmpdir) / "worldview.yaml"
+            wv_path.write_text(
+                "space_id: demo\n"
+                "cta:\n"
+                "  join_label: 笑いの教養講座を見る\n"
+                "  join_url: https://example.com/course\n"
+                "  join_note: 世界中の気づきが、ここから星になる。\n",
+                encoding="utf-8",
+            )
+            merged = pipeline_common.load_worldview(wv_path)
+            self.assertEqual(merged["cta"]["join_url"], "https://example.com/course")
+            self.assertEqual(merged["cta"]["join_label"], "笑いの教養講座を見る")
+
+    def test_public_page_includes_closing_cta(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "kizuki_tree.sqlite3"
+            try:
+                app.init_db()
+                app.insert_reflection("line", "Aさん", "待つことの気づき", status="approved")
+                html = app.public_page().decode("utf-8")
+                self.assertIn("joincta", html)
+                self.assertIn("Join the Universe", html)
+            finally:
+                app.DB_PATH = original_db_path
 
     def test_build_consent_reply_payload_includes_parent_context_when_reply(self):
         payload = app.build_consent_reply_payload("reply-1", parent_title="Aさんの気づき")

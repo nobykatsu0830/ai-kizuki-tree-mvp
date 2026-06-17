@@ -97,6 +97,11 @@ DEFAULT_WORLDVIEW = {
         "star_born": "あなたの星が生まれました",
         "in_constellation": "あなたの星が「{constellation}」星座につながりました",
     },
+    "cta": {
+        "join_label": "",
+        "join_url": "",
+        "join_note": "",
+    },
     "theme": {"primary_color": "#1a1a2e"},
 }
 
@@ -210,6 +215,20 @@ def worldview_message(key: str, default: str = "", **values) -> str:
         return text.format(**values)
     except KeyError:
         return text
+
+
+def worldview_cta() -> dict:
+    """公開ページの参加CTA。worldview.yaml の cta.* で差し替え可能（世界展開向け）。
+    未設定なら内部の星投稿フォームへ安全にフォールバックする。"""
+    cta = load_worldview().get("cta", {}) or {}
+    return {
+        "join_label": str(cta.get("join_label") or "この宇宙に星を送る"),
+        "join_url": str(cta.get("join_url") or "/submit"),
+        "join_note": str(
+            cta.get("join_note")
+            or "講座で生まれた気づき・感想・問いは、公式LINEに送るだけでこの宇宙の星になります。"
+        ),
+    }
 
 
 def table_columns(conn, table: str) -> set[str]:
