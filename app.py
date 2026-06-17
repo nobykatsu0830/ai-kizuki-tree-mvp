@@ -66,6 +66,11 @@ THEME_KEYWORDS = {
 }
 
 
+MAX_BODY_BYTES = 64 * 1024  # DoS対策: リクエストボディの上限
+MAX_BODY_CHARS = 2000       # 投稿テキストの最大文字数
+MAX_NAME_CHARS = 50         # 表示名の最大文字数
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1574,6 +1579,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_raw(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_BODY_BYTES:
+            raise ValueError(f"body too large: {length} bytes")
         return self.rfile.read(length) if length else b""
 
     def read_form_or_json_from_raw(self, raw_bytes: bytes) -> dict[str, str]:
@@ -1648,165 +1655,193 @@ class Handler(BaseHTTPRequestHandler):
         self.redirect("/admin")
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        qs = parse_qs(parsed.query)
-        if is_admin_path(parsed.path) and not self.require_admin():
-            return
-        if parsed.path == "/":
-            self.send_html(public_page())
-        elif parsed.path == "/cosmos":
-            self.send_html(cosmos_page())
-        elif parsed.path == "/questions":
-            self.send_html(questions_page())
-        elif parsed.path == "/submit":
-            self.send_html(submit_page(qs.get("parent_id", [""])[0]))
-        elif parsed.path == "/admin":
-            self.send_html(admin_page())
-        elif parsed.path == "/admin/recordings":
-            message = ""
-            if qs.get("created"):
-                message = f"原液を登録しました。ID: {qs['created'][0]}"
-            elif qs.get("pipeline"):
-                message = f"ローカルパイプラインを実行しました。ID: {qs['pipeline'][0]}"
-            elif qs.get("error") == ["empty"]:
-                message = "タイトルまたはパスを入力してください。"
-            self.send_html(recordings_page(message))
-        elif parsed.path == "/admin/followup-suggestions":
-            self.send_html(followup_suggestions_page())
-        elif parsed.path == "/admin/followups":
-            message = ""
-            if qs.get("created"):
-                message = f"フォローアップを登録しました。ID: {qs['created'][0]}"
-            elif qs.get("error") == ["missing"]:
-                message = "星座とメモを入力してください。"
-            self.send_html(followups_page(message))
-        elif parsed.path == "/admin/obsidian-vault":
-            message = ""
-            if qs.get("exported"):
-                message = f"公開用Vaultへ書き出しました: {qs['exported'][0]}"
-            elif qs.get("error") == ["second-brain"]:
-                message = "個人Second Brainには書き出せません。別保管庫を指定してください。"
-            self.send_html(obsidian_vault_page(message))
-        elif parsed.path == "/api/constellations":
-            self.send_json(api_constellations_payload(qs.get("week", [None])[0]))
-        elif parsed.path in ("/factory", "/studio"):
-            message = ""
-            if qs.get("created"):
-                message = f"原液を保存し、教材化メモを生成しました。ID: {qs['created'][0]}"
-            elif qs.get("error") == ["empty"]:
-                message = "原液テキストが空だったため、保存しませんでした。"
-            self.send_html(factory_page(message))
-        elif parsed.path in ("/weekly", "/editor"):
-            self.send_html(weekly_page())
-        elif parsed.path == "/health":
-            self.send_html(layout("OK", "<h1>OK</h1>"))
-        else:
-            self.send_html(layout("404", "<h1>404</h1>"), 404)
+        try:
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            if is_admin_path(parsed.path) and not self.require_admin():
+                return
+            if parsed.path == "/":
+                self.send_html(public_page())
+            elif parsed.path == "/cosmos":
+                self.send_html(cosmos_page())
+            elif parsed.path == "/questions":
+                self.send_html(questions_page())
+            elif parsed.path == "/submit":
+                self.send_html(submit_page(qs.get("parent_id", [""])[0]))
+            elif parsed.path == "/admin":
+                self.send_html(admin_page())
+            elif parsed.path == "/admin/recordings":
+                message = ""
+                if qs.get("created"):
+                    message = f"原液を登録しました。ID: {qs['created'][0]}"
+                elif qs.get("pipeline"):
+                    message = f"ローカルパイプラインを実行しました。ID: {qs['pipeline'][0]}"
+                elif qs.get("error") == ["empty"]:
+                    message = "タイトルまたはパスを入力してください。"
+                self.send_html(recordings_page(message))
+            elif parsed.path == "/admin/followup-suggestions":
+                self.send_html(followup_suggestions_page())
+            elif parsed.path == "/admin/followups":
+                message = ""
+                if qs.get("created"):
+                    message = f"フォローアップを登録しました。ID: {qs['created'][0]}"
+                elif qs.get("error") == ["missing"]:
+                    message = "星座とメモを入力してください。"
+                self.send_html(followups_page(message))
+            elif parsed.path == "/admin/obsidian-vault":
+                message = ""
+                if qs.get("exported"):
+                    message = f"公開用Vaultへ書き出しました: {qs['exported'][0]}"
+                elif qs.get("error") == ["second-brain"]:
+                    message = "個人Second Brainには書き出せません。別保管庫を指定してください。"
+                self.send_html(obsidian_vault_page(message))
+            elif parsed.path == "/api/constellations":
+                self.send_json(api_constellations_payload(qs.get("week", [None])[0]))
+            elif parsed.path in ("/factory", "/studio"):
+                message = ""
+                if qs.get("created"):
+                    message = f"原液を保存し、教材化メモを生成しました。ID: {qs['created'][0]}"
+                elif qs.get("error") == ["empty"]:
+                    message = "原液テキストが空だったため、保存しませんでした。"
+                self.send_html(factory_page(message))
+            elif parsed.path in ("/weekly", "/editor"):
+                self.send_html(weekly_page())
+            elif parsed.path == "/health":
+                try:
+                    with db() as conn:
+                        conn.execute("SELECT 1").fetchone()
+                    db_ok = True
+                except Exception:
+                    db_ok = False
+                db_label = "PostgreSQL" if pipeline_common.DATABASE_URL else "SQLite"
+                msg = f"OK — {db_label}" if db_ok else f"DB ERROR — {db_label}"
+                self.send_html(layout("Health", f"<h1>{msg}</h1>"), 200 if db_ok else 503)
+            else:
+                self.send_html(layout("404", "<h1>404</h1>"), 404)
+        except Exception as exc:
+            print(f"[ERROR] GET {self.path}: {exc}", flush=True)
+            try:
+                self.send_html(layout("500", "<h1>500 サーバーエラー</h1><p>しばらくしてから再度お試しください。</p>"), 500)
+            except Exception:
+                pass
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if is_admin_path(path) and not self.require_admin():
-            return
-        if path in ("/api/line-webhook", "/webhook/line"):
-            self.handle_line_webhook(self.read_raw())
-        elif path == "/submit":
-            data = self.read_form_or_json()
-            display_name = (data.get("display_name") or "").strip() or "匿名参加者"
-            body = (data.get("body") or "").strip()
-            if not body:
-                self.redirect("/submit?error=empty")
+        try:
+            if is_admin_path(path) and not self.require_admin():
                 return
-            parent_id = (data.get("parent_id") or "").strip() or None
-            insert_reflection("web", display_name, body, parent_id=parent_id, status="approved")
-            self.redirect("/?sent=1")
-        elif path == "/api/admin/approve":
-            data = self.read_form_or_json()
-            approve(data.get("id", ""))
-            publish_static_site_safely("Auto publish approved kizuki")
-            self.redirect("/admin")
-        elif path == "/api/admin/hide":
-            data = self.read_form_or_json()
-            hide_reflection(data.get("id", ""))
-            publish_static_site_safely("Hide public kizuki")
-            self.redirect("/admin")
-        elif path == "/api/factory/create":
-            data = self.read_form_or_json()
-            raw_text = data.get("raw_text", "")
-            if not raw_text.strip():
-                self.redirect("/factory?error=empty")
-                return
-            mid = insert_media_material(data.get("title", ""), data.get("course", ""), raw_text)
-            self.redirect(f"/factory?created={mid}")
-        elif path == "/admin/recordings":
-            data = self.read_form_or_json()
-            title = data.get("title", "").strip()
-            audio_path = data.get("audio_path", "").strip()
-            if not title and not audio_path:
-                self.redirect("/admin/recordings?error=empty")
-                return
-            with db() as conn:
-                rid = pipeline_common.create_source_recording(
-                    conn,
-                    title=title or Path(audio_path).stem or "無題の原液",
-                    kind=data.get("kind", "voice_memo"),
-                    audio_path=audio_path,
-                    recorded_at=data.get("recorded_at", ""),
-                )
-            self.redirect(f"/admin/recordings?created={rid}")
-        elif path.startswith("/admin/recordings/") and path.endswith("/pipeline"):
-            recording_id = path.removeprefix("/admin/recordings/").removesuffix("/pipeline").strip("/")
-            try:
+            if path in ("/api/line-webhook", "/webhook/line"):
+                self.handle_line_webhook(self.read_raw())
+            elif path == "/submit":
+                data = self.read_form_or_json()
+                display_name = (data.get("display_name") or "").strip() or "匿名参加者"
+                body = (data.get("body") or "").strip()
+                if not body:
+                    self.redirect("/submit?error=empty")
+                    return
+                if len(body) > MAX_BODY_CHARS:
+                    self.redirect("/submit?error=toolong")
+                    return
+                display_name = display_name[:MAX_NAME_CHARS]
+                parent_id = (data.get("parent_id") or "").strip() or None
+                insert_reflection("web", display_name, body, parent_id=parent_id, status="approved")
+                self.redirect("/?sent=1")
+            elif path == "/api/admin/approve":
+                data = self.read_form_or_json()
+                approve(data.get("id", ""))
+                publish_static_site_safely("Auto publish approved kizuki")
+                self.redirect("/admin")
+            elif path == "/api/admin/hide":
+                data = self.read_form_or_json()
+                hide_reflection(data.get("id", ""))
+                publish_static_site_safely("Hide public kizuki")
+                self.redirect("/admin")
+            elif path == "/api/factory/create":
+                data = self.read_form_or_json()
+                raw_text = data.get("raw_text", "")
+                if not raw_text.strip():
+                    self.redirect("/factory?error=empty")
+                    return
+                mid = insert_media_material(data.get("title", ""), data.get("course", ""), raw_text)
+                self.redirect(f"/factory?created={mid}")
+            elif path == "/admin/recordings":
+                data = self.read_form_or_json()
+                title = data.get("title", "").strip()
+                audio_path = data.get("audio_path", "").strip()
+                if not title and not audio_path:
+                    self.redirect("/admin/recordings?error=empty")
+                    return
                 with db() as conn:
-                    pipeline_common.run_recording_pipeline(conn, recording_id)
-            except Exception as exc:
-                self.send_html(layout("Pipeline Error", f"<h1>Pipeline Error</h1><pre>{esc(str(exc))}</pre>"), 400)
-                return
-            self.redirect(f"/admin/recordings?pipeline={recording_id}")
-        elif path == "/admin/followups":
-            data = self.read_form_or_json()
-            constellation_id = data.get("constellation_id", "").strip()
-            note_md = data.get("note_md", "").strip()
-            if not constellation_id or not note_md:
-                self.redirect("/admin/followups?error=missing")
-                return
-            title = data.get("title", "").strip()
-            audio_path = data.get("audio_path", "").strip()
-            with db() as conn:
-                source_recording_id = None
-                if audio_path:
-                    source_recording_id = pipeline_common.create_source_recording(
+                    rid = pipeline_common.create_source_recording(
                         conn,
-                        title=title or "星座フォローアップ",
-                        kind="followup",
+                        title=title or Path(audio_path).stem or "無題の原液",
+                        kind=data.get("kind", "voice_memo"),
                         audio_path=audio_path,
-                        recorded_at=now_iso(),
+                        recorded_at=data.get("recorded_at", ""),
                     )
-                fid = pipeline_common.create_followup(conn, constellation_id, note_md, source_recording_id=source_recording_id)
-            self.redirect(f"/admin/followups?created={fid}")
-        elif path == "/admin/obsidian-vault/export":
-            data = self.read_form_or_json()
-            vault_path = data.get("vault_path", "").strip() or str(export_obsidian.DEFAULT_PUBLIC_VAULT_PATH)
-            # パストラバーサル防止: 書き出し先はホーム配下またはプロジェクト配下に限定する
-            resolved = Path(vault_path).expanduser().resolve()
-            allowed = (Path.home().resolve(), ROOT.resolve())
-            if not any(str(resolved).startswith(str(base)) for base in allowed):
-                self.redirect("/admin/obsidian-vault?error=second-brain")
-                return
-            try:
+                self.redirect(f"/admin/recordings?created={rid}")
+            elif path.startswith("/admin/recordings/") and path.endswith("/pipeline"):
+                recording_id = path.removeprefix("/admin/recordings/").removesuffix("/pipeline").strip("/")
+                try:
+                    with db() as conn:
+                        pipeline_common.run_recording_pipeline(conn, recording_id)
+                except Exception as exc:
+                    self.send_html(layout("Pipeline Error", f"<h1>Pipeline Error</h1><pre>{esc(str(exc))}</pre>"), 400)
+                    return
+                self.redirect(f"/admin/recordings?pipeline={recording_id}")
+            elif path == "/admin/followups":
+                data = self.read_form_or_json()
+                constellation_id = data.get("constellation_id", "").strip()
+                note_md = data.get("note_md", "").strip()
+                if not constellation_id or not note_md:
+                    self.redirect("/admin/followups?error=missing")
+                    return
+                title = data.get("title", "").strip()
+                audio_path = data.get("audio_path", "").strip()
                 with db() as conn:
-                    manifest = export_obsidian.export_public_vault(conn, vault_path)
-            except ValueError:
-                self.redirect("/admin/obsidian-vault?error=second-brain")
-                return
-            self.send_html(obsidian_vault_page("公開用Vaultへ書き出しました。", manifest=manifest))
-        else:
-            self.send_html(layout("404", "<h1>404</h1>"), 404)
+                    source_recording_id = None
+                    if audio_path:
+                        source_recording_id = pipeline_common.create_source_recording(
+                            conn,
+                            title=title or "星座フォローアップ",
+                            kind="followup",
+                            audio_path=audio_path,
+                            recorded_at=now_iso(),
+                        )
+                    fid = pipeline_common.create_followup(conn, constellation_id, note_md, source_recording_id=source_recording_id)
+                self.redirect(f"/admin/followups?created={fid}")
+            elif path == "/admin/obsidian-vault/export":
+                data = self.read_form_or_json()
+                vault_path = data.get("vault_path", "").strip() or str(export_obsidian.DEFAULT_PUBLIC_VAULT_PATH)
+                resolved = Path(vault_path).expanduser().resolve()
+                allowed = (Path.home().resolve(), ROOT.resolve())
+                if not any(str(resolved).startswith(str(base)) for base in allowed):
+                    self.redirect("/admin/obsidian-vault?error=second-brain")
+                    return
+                try:
+                    with db() as conn:
+                        manifest = export_obsidian.export_public_vault(conn, vault_path)
+                except ValueError:
+                    self.redirect("/admin/obsidian-vault?error=second-brain")
+                    return
+                self.send_html(obsidian_vault_page("公開用Vaultへ書き出しました。", manifest=manifest))
+            else:
+                self.send_html(layout("404", "<h1>404</h1>"), 404)
+        except Exception as exc:
+            print(f"[ERROR] POST {path}: {exc}", flush=True)
+            try:
+                self.send_html(layout("500", "<h1>500 サーバーエラー</h1><p>しばらくしてから再度お試しください。</p>"), 500)
+            except Exception:
+                pass
 
 
 def main() -> None:
     load_dotenv()
     init_db()
-    seed_if_empty()
+    db_mode = "PostgreSQL (Supabase)" if pipeline_common.DATABASE_URL else f"SQLite ({DB_PATH})"
+    print(f"[DB] Using {db_mode}", flush=True)
+    if not pipeline_common.DATABASE_URL:
+        seed_if_empty()
     port = int(os.environ.get("PORT", 8787))
     host = "0.0.0.0"
     server = ThreadingHTTPServer((host, port), Handler)
