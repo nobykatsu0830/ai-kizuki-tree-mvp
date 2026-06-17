@@ -184,6 +184,78 @@ class LineWebhookHelpersTest(unittest.TestCase):
 
         self.assertIn("Aさんの気づきへの返信", payload["messages"][0]["text"])
 
+    def test_parse_tag_json_extracts_array_from_messy_text(self):
+        self.assertEqual(app._parse_tag_json('テーマは ["待つ","安心"] です'), ["待つ", "安心"])
+        self.assertEqual(app._parse_tag_json('```json\n["笑い"]\n```'), ["笑い"])
+        self.assertEqual(app._parse_tag_json("not json"), [])
+        # 重複除去と最大3個
+        self.assertEqual(app._parse_tag_json('["a","a","b","c","d"]'), ["a", "b", "c"])
+
+    def test_llm_infer_tags_returns_none_without_api_key(self):
+        original = os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            self.assertIsNone(app.llm_infer_tags("笑った", ["笑い"]))
+        finally:
+            if original is not None:
+                os.environ["ANTHROPIC_API_KEY"] = original
+
+    def test_resolve_tags_falls_back_and_grows_theme_vocabulary(self):
+        original = os.environ.pop("ANTHROPIC_API_KEY", None)
+        original_db_path = app.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                app.DB_PATH = Path(tmpdir) / "kizuki_tree.sqlite3"
+                app.init_db()
+                app.insert_reflection("web", "テスト", "ジブリッシュで笑ったら肩の力が抜けた", status="approved")
+                with app.db() as conn:
+                    names = pipeline_common.active_theme_names(conn)
+                # キーワードフォールバックでも、付いたテーマが語彙表に蓄積される
+                self.assertTrue(set(names) & {"笑い", "ジブリッシュ", "身体感覚"})
+        finally:
+            app.DB_PATH = original_db_path
+            if original is not None:
+                os.environ["ANTHROPIC_API_KEY"] = original
+
+    def test_ensure_theme_is_idempotent_and_skips_unclassified(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "kizuki_tree.sqlite3"
+            try:
+                app.init_db()
+                with app.db() as conn:
+                    pipeline_common.ensure_theme(conn, "新しいテーマ")
+                    pipeline_common.ensure_theme(conn, "新しいテーマ")
+                    pipeline_common.ensure_theme(conn, "未分類")
+                    pipeline_common.ensure_theme(conn, "")
+                    names = pipeline_common.active_theme_names(conn)
+                self.assertEqual(names.count("新しいテーマ"), 1)
+                self.assertNotIn("未分類", names)
+            finally:
+                app.DB_PATH = original_db_path
+
+    def test_init_db_seeds_themes_from_existing_reflection_tags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "kizuki_tree.sqlite3"
+            try:
+                app.init_db()
+                with app.db() as conn:
+                    conn.execute(
+                        "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        ("seedrow", "web", "X", "本文", json.dumps(["継承テーマ", "未分類"], ensure_ascii=False),
+                         "approved", app.now_iso(), pipeline_common.default_space_id(), "insight", "universe"),
+                    )
+                    conn.execute("DELETE FROM themes")
+                # 再初期化でテーマ語彙が既存タグから取り込まれる
+                app.init_db()
+                with app.db() as conn:
+                    names = pipeline_common.active_theme_names(conn)
+                self.assertIn("継承テーマ", names)
+                self.assertNotIn("未分類", names)
+            finally:
+                app.DB_PATH = original_db_path
+
     def test_get_line_profile_name_returns_empty_without_token_or_user(self):
         original = os.environ.pop("LINE_CHANNEL_ACCESS_TOKEN", None)
         try:

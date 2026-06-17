@@ -352,6 +352,13 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 notified_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_reflux_star_kind ON reflux_notifications(star_id, kind);
+
+            CREATE TABLE IF NOT EXISTS themes (
+                name TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'active',
+                merged_into TEXT,
+                created_at TEXT NOT NULL
+            );
             """
         )
         ensure_column(conn, "reflections", "space_id", f"TEXT NOT NULL DEFAULT '{space_id}'")
@@ -366,6 +373,38 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         conn.execute("UPDATE reflections SET space_id=? WHERE space_id IS NULL OR space_id=''", (space_id,))
         conn.execute("UPDATE reflections SET star_kind='insight' WHERE star_kind IS NULL OR star_kind=''", ())
         conn.execute("UPDATE reflections SET visibility='universe' WHERE visibility IS NULL OR visibility=''", ())
+        # テーマ語彙が空なら、既存の気づきに付いているタグを初期語彙として取り込む（データから育てる）
+        theme_count = conn.execute("SELECT COUNT(*) AS n FROM themes").fetchone()["n"]
+        if not theme_count:
+            seen: set[str] = set()
+            for r in conn.execute("SELECT tags FROM reflections"):
+                for tag in parse_json_list(r["tags"], default=()):
+                    if tag and tag != "未分類":
+                        seen.add(tag)
+            for tag in seen:
+                conn.execute(
+                    "INSERT OR IGNORE INTO themes (name, status, created_at) VALUES (?, 'active', ?)",
+                    (tag, now_iso()),
+                )
+
+
+def active_theme_names(conn) -> list[str]:
+    """現在アクティブなテーマ名を生成順に返す（AI分類で再利用する語彙）。"""
+    rows = conn.execute(
+        "SELECT name FROM themes WHERE status='active' ORDER BY created_at ASC, name ASC"
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def ensure_theme(conn, name: str) -> None:
+    """テーマが無ければ追加する（自動創発の保存先）。既存ならそのまま。"""
+    name = (name or "").strip()
+    if not name or name == "未分類":
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO themes (name, status, created_at) VALUES (?, 'active', ?)",
+        (name, now_iso()),
+    )
 
 
 def normalize_text(text: str) -> str:

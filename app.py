@@ -91,6 +91,85 @@ def infer_tags(text: str) -> list[str]:
     return tags or ["未分類"]
 
 
+def _parse_tag_json(text: str) -> list[str]:
+    """LLM応答からテーマのJSON配列を抜き出す。前後に説明文やコードフェンスがあっても拾う。"""
+    if not text:
+        return []
+    match = re.search(r"\[.*\]", text, re.S)
+    if not match:
+        return []
+    try:
+        value = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    clean: list[str] = []
+    for item in value:
+        label = str(item).strip()
+        if label and label not in clean:
+            clean.append(label)
+        if len(clean) >= 3:
+            break
+    return clean
+
+
+def llm_infer_tags(body: str, existing_themes: list[str]) -> list[str] | None:
+    """LLMで気づき本文からテーマを判定する。既存テーマを優先し、合わない時だけ新テーマを生む。
+    APIキー未設定や失敗時は None を返し、呼び出し側がキーワード辞書にフォールバックする。"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not body.strip():
+        return None
+    model = os.environ.get("KIZUKI_TAGGING_MODEL", "claude-haiku-4-5-20251001")
+    theme_list = "、".join(existing_themes) if existing_themes else "（まだありません）"
+    system = (
+        "あなたは「気づきの宇宙」という学びの場の投稿に、短いテーマ名を付ける分類器です。"
+        "笑い・感情・身体感覚・人間関係・自己理解などの観点で、本文に本当に当てはまるテーマだけを選びます。"
+        "できるだけ既存のテーマを再利用し、どれも合わない時だけ新しいテーマを1つまで作ります。"
+        "テーマ名は日本語の短い名詞句（2〜8文字目安）。合計1〜3個。"
+        'JSON配列だけを返してください。例: ["待つ","安心"]'
+    )
+    user = f"既存のテーマ: {theme_list}\n\n気づきの本文:\n{body.strip()[:1500]}"
+    payload = {
+        "model": model,
+        "max_tokens": 120,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=line_ssl_context()) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        text = "".join(
+            part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"
+        )
+        tags = _parse_tag_json(text)
+        return tags or None
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+        print(f"LLM tagging failed: {exc}")
+        return None
+
+
+def resolve_tags(conn, body: str) -> list[str]:
+    """気づきのテーマを決める。LLM→既存語彙優先で創発、失敗時はキーワード辞書。新テーマは語彙表に保存。"""
+    existing = pipeline_common.active_theme_names(conn)
+    tags = llm_infer_tags(body, existing)
+    if not tags:
+        tags = infer_tags(body)
+    for tag in tags:
+        pipeline_common.ensure_theme(conn, tag)
+    return tags or ["未分類"]
+
+
 MATERIAL_TAG_KEYWORDS = {
     "関係性": ["親子", "夫婦", "仲間", "職場", "関係", "対話"],
     "自己理解": ["自分", "本音", "気づき", "感じ", "思い込み"],
@@ -200,9 +279,9 @@ def generate_material_derivatives(title: str, course: str, raw_text: str) -> dic
 
 def insert_reflection(source: str, display_name: str, body: str, parent_id: str | None = None, external_user_id: str | None = None, status: str = "pending") -> str:
     rid = uuid.uuid4().hex[:12]
-    tags = infer_tags(body)
     star_kind = pipeline_common.infer_star_kind(body)
     with db() as conn:
+        tags = resolve_tags(conn, body)
         conn.execute(
             """
             INSERT INTO reflections
