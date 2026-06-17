@@ -1532,6 +1532,25 @@ def send_line_payload(payload: dict) -> None:
         print(f"LINE reply failed: {exc}")
 
 
+def get_line_profile_name(user_id: str) -> str:
+    """LINEプロフィールの表示名を取得する。失敗時は空文字を返す（投稿は止めない）。"""
+    token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token or not user_id:
+        return ""
+    req = urllib.request.Request(
+        f"https://api.line.me/v2/bot/profile/{user_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5, context=line_ssl_context()) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return str(data.get("displayName") or "").strip()
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ValueError) as exc:
+        print(f"LINE profile fetch failed: {exc}")
+        return ""
+
+
 def reply_to_line(reply_token: str, text: str) -> None:
     if not reply_token:
         return
@@ -1651,9 +1670,10 @@ class Handler(BaseHTTPRequestHandler):
                     reply_command = parse_line_reply_command(message["body"])
                     parent_id = reply_command["parent_id"] if reply_command else None
                     body = reply_command["body"] if reply_command else message["body"]
+                    profile_name = get_line_profile_name(message["external_user_id"]) or "LINE参加者"
                     insert_reflection(
                         source="line",
-                        display_name="LINE参加者",
+                        display_name=profile_name,
                         body=body,
                         parent_id=parent_id,
                         external_user_id=message["external_user_id"],

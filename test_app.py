@@ -1,3 +1,4 @@
+import os
 import json
 import tempfile
 import unittest
@@ -182,6 +183,34 @@ class LineWebhookHelpersTest(unittest.TestCase):
         payload = app.build_consent_reply_payload("reply-1", parent_title="Aさんの気づき")
 
         self.assertIn("Aさんの気づきへの返信", payload["messages"][0]["text"])
+
+    def test_get_line_profile_name_returns_empty_without_token_or_user(self):
+        original = os.environ.pop("LINE_CHANNEL_ACCESS_TOKEN", None)
+        try:
+            self.assertEqual(app.get_line_profile_name("U123"), "")
+            self.assertEqual(app.get_line_profile_name(""), "")
+        finally:
+            if original is not None:
+                os.environ["LINE_CHANNEL_ACCESS_TOKEN"] = original
+
+    def test_consent_name_keeps_stored_profile_display_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "kizuki_tree.sqlite3"
+            try:
+                app.init_db()
+                # webhookでLINEプロフィール名が保存された状態を再現
+                rid = app.insert_reflection(
+                    "line", "大久保信克", "今日の気づきです。",
+                    external_user_id="Uabc", status="awaiting_consent",
+                )
+                returned = app.apply_consent("Uabc", "name")
+                self.assertEqual(returned, rid)
+                row = next(r for r in app.rows("approved") if r["id"] == rid)
+                # 「名前ありでOK」では本名がそのまま残る
+                self.assertEqual(row["display_name"], "大久保信克")
+            finally:
+                app.DB_PATH = original_db_path
 
     def test_cosmos_nodes_marks_replies_with_parent_id(self):
         rows = [
