@@ -299,6 +299,60 @@ class LineWebhookHelpersTest(unittest.TestCase):
             self.assertTrue(row["themed_at"])  # 処理済みの印
             self.assertIn("解放感", names)  # 新テーマが語彙に創発
 
+    def test_resolve_space_path_parses_slug(self):
+        self.assertEqual(app.resolve_space_path("/s/demo/cosmos"), ("demo", "/cosmos"))
+        self.assertEqual(app.resolve_space_path("/s/demo"), ("demo", "/"))
+        self.assertEqual(app.resolve_space_path("/s/demo/"), ("demo", "/"))
+        # /s/ プレフィックスなしはデフォルト宇宙、パスはそのまま
+        self.assertEqual(app.resolve_space_path("/cosmos"), (pipeline_common.DEFAULT_SPACE_ID, "/cosmos"))
+        self.assertEqual(app.resolve_space_path("/"), (pipeline_common.DEFAULT_SPACE_ID, "/"))
+
+    def test_space_base_prefix(self):
+        try:
+            pipeline_common.set_current_space(pipeline_common.DEFAULT_SPACE_ID, pipeline_common.load_worldview())
+            self.assertEqual(app.space_base(), "")  # デフォルト宇宙は接頭辞なし
+            pipeline_common.set_current_space("demo", {"space_id": "demo"})
+            self.assertEqual(app.space_base(), "/s/demo")
+        finally:
+            pipeline_common.clear_current_space()
+
+    def test_spaces_are_isolated_in_queries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "k.sqlite3"
+            try:
+                app.init_db()
+                with app.db() as conn:
+                    pipeline_common.create_space(conn, "demo", "デモ宇宙", {"terms": {"universe": "デモ宇宙"}})
+                # noby宇宙に星
+                pipeline_common.set_current_space("noby-universe", pipeline_common.load_worldview())
+                app.insert_reflection("web", "ノビー", "noby星", status="approved")
+                pipeline_common.clear_current_space()
+                # demo宇宙に星
+                with app.db() as conn:
+                    wv = pipeline_common.load_worldview_for_space(conn, "demo")
+                pipeline_common.set_current_space("demo", wv)
+                app.insert_reflection("web", "太郎", "demo星", status="approved")
+                demo_rows = [r["body"] for r in app.rows("approved")]
+                pipeline_common.clear_current_space()
+                pipeline_common.set_current_space("noby-universe", pipeline_common.load_worldview())
+                noby_rows = [r["body"] for r in app.rows("approved")]
+                pipeline_common.clear_current_space()
+                self.assertEqual(demo_rows, ["demo星"])
+                self.assertEqual(noby_rows, ["noby星"])
+            finally:
+                pipeline_common.clear_current_space()
+                app.DB_PATH = original_db_path
+
+    def test_unknown_space_worldview_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                wv = pipeline_common.load_worldview_for_space(conn, "noby-universe")
+            self.assertEqual(wv["space_id"], "noby-universe")
+            self.assertTrue(wv["terms"]["universe"])
+
     def test_rename_theme_replaces_tags_everywhere(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "k.sqlite3"

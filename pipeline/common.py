@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -193,23 +194,90 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def load_worldview(path: str | Path = DEFAULT_WORLDVIEW_PATH) -> dict:
+    """worldview.yaml を読む（デフォルト=noby宇宙の種・init/CLI/バッチ用）。"""
     if not Path(path).exists():
         return dict(DEFAULT_WORLDVIEW)
     loaded = load_simple_yaml(path)
     return _deep_merge(DEFAULT_WORLDVIEW, loaded)
 
 
-def default_space_id() -> str:
+# --- マルチテナント: リクエストごとの「現在の宇宙」をスレッドローカルで保持 ---
+_request_ctx = threading.local()
+
+
+def set_current_space(space_id: str, worldview: dict) -> None:
+    """リクエスト処理の先頭で、対象スペースと世界観を束ねてセットする。"""
+    _request_ctx.space_id = space_id
+    _request_ctx.worldview = worldview
+
+
+def clear_current_space() -> None:
+    _request_ctx.space_id = None
+    _request_ctx.worldview = None
+
+
+def current_worldview() -> dict:
+    """現在のリクエストの世界観。未設定なら yaml（後方互換: CLI/バッチ/テスト）。"""
+    wv = getattr(_request_ctx, "worldview", None)
+    return wv if wv else load_worldview()
+
+
+def current_space_id() -> str:
+    sid = getattr(_request_ctx, "space_id", None)
+    if sid:
+        return str(sid)
     return str(load_worldview().get("space_id") or DEFAULT_SPACE_ID)
 
 
+def load_worldview_for_space(conn, space_id: str) -> dict:
+    """スペースの世界観をDBから読む。無ければ noby はyaml、他はデフォルトにフォールバック。"""
+    row = conn.execute("SELECT worldview_json FROM spaces WHERE id=?", (space_id,)).fetchone()
+    if row and row["worldview_json"]:
+        try:
+            merged = _deep_merge(DEFAULT_WORLDVIEW, json.loads(row["worldview_json"]))
+            merged["space_id"] = space_id
+            return merged
+        except (json.JSONDecodeError, TypeError):
+            pass
+    base = load_worldview() if space_id == DEFAULT_SPACE_ID else dict(DEFAULT_WORLDVIEW)
+    base = dict(base)
+    base["space_id"] = space_id
+    return base
+
+
+def list_spaces(conn) -> list[dict]:
+    rows = conn.execute("SELECT id, name, created_at FROM spaces ORDER BY created_at ASC").fetchall()
+    return [{"id": r["id"], "name": r["name"], "created_at": r["created_at"]} for r in rows]
+
+
+def space_exists(conn, space_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM spaces WHERE id=?", (space_id,)).fetchone() is not None
+
+
+def create_space(conn, space_id: str, name: str, worldview: dict | None = None) -> None:
+    """新しい宇宙を作る（手動オンボード用）。worldview は terms/messages/cta/theme の辞書。"""
+    space_id = (space_id or "").strip()
+    if not space_id:
+        raise ValueError("space_id is required")
+    wv_json = json.dumps(worldview or {}, ensure_ascii=False)
+    conn.execute(
+        "INSERT OR IGNORE INTO spaces (id, name, worldview_path, worldview_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        (space_id, (name or space_id).strip(), "", wv_json, now_iso()),
+    )
+    conn.execute("UPDATE spaces SET name=?, worldview_json=? WHERE id=?", ((name or space_id).strip(), wv_json, space_id))
+
+
+def default_space_id() -> str:
+    return current_space_id()
+
+
 def worldview_term(key: str, default: str = "") -> str:
-    terms = load_worldview().get("terms", {})
+    terms = current_worldview().get("terms", {})
     return str(terms.get(key) or default or key)
 
 
 def worldview_message(key: str, default: str = "", **values) -> str:
-    messages = load_worldview().get("messages", {})
+    messages = current_worldview().get("messages", {})
     text = str(messages.get(key) or default or key)
     try:
         return text.format(**values)
@@ -218,9 +286,9 @@ def worldview_message(key: str, default: str = "", **values) -> str:
 
 
 def worldview_cta() -> dict:
-    """公開ページの参加CTA。worldview.yaml の cta.* で差し替え可能（世界展開向け）。
+    """公開ページの参加CTA。現在の宇宙の cta.* で差し替え可能。
     未設定なら内部の星投稿フォームへ安全にフォールバックする。"""
-    cta = load_worldview().get("cta", {}) or {}
+    cta = current_worldview().get("cta", {}) or {}
     return {
         "join_label": str(cta.get("join_label") or "この宇宙に星を送る"),
         "join_url": str(cta.get("join_url") or "/submit"),
@@ -286,6 +354,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 worldview_path TEXT NOT NULL,
+                worldview_json TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -367,6 +436,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "reflections", "embedding_json", "TEXT")
         ensure_column(conn, "reflections", "constellation_id", "TEXT")
         ensure_column(conn, "reflections", "themed_at", "TEXT")  # LLMバッチ分類済みの印（NULL=未処理）
+        ensure_column(conn, "spaces", "worldview_json", "TEXT")  # スペース別の世界観（マルチテナント）
         conn.execute(
             "INSERT OR IGNORE INTO spaces (id, name, worldview_path, created_at) VALUES (?, ?, ?, ?)",
             (space_id, str(worldview.get("terms", {}).get("universe", "気づきの宇宙")), "worldview.yaml", now_iso()),

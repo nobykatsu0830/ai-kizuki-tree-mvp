@@ -377,11 +377,11 @@ def seed_if_empty() -> None:
 
 
 def rows(status: str | None = None) -> list[sqlite3.Row]:
-    q = "SELECT * FROM reflections"
-    params: tuple[str, ...] = ()
+    q = "SELECT * FROM reflections WHERE space_id=?"
+    params: list[str] = [pipeline_common.current_space_id()]
     if status:
-        q += " WHERE status=?"
-        params = (status,)
+        q += " AND status=?"
+        params.append(status)
     q += " ORDER BY created_at ASC"
     with db() as conn:
         return list(conn.execute(q, params))
@@ -511,9 +511,10 @@ def cosmos_rows() -> list[sqlite3.Row]:
                 SELECT r.*, c.name AS constellation_name
                 FROM reflections r
                 LEFT JOIN constellations c ON c.id=r.constellation_id
-                WHERE r.status='approved' AND r.visibility='universe'
+                WHERE r.status='approved' AND r.visibility='universe' AND r.space_id=?
                 ORDER BY r.created_at ASC
-                """
+                """,
+                (pipeline_common.current_space_id(),),
             )
         )
 
@@ -639,10 +640,10 @@ __FONTS__
 <body>
 <div class="sky"></div><div class="stars"></div><div class="stars stars2"></div><div class="meteor"></div>
 <div class="wrap">
-<nav class="topnav"><a class="brand" href="/"><b>✦</b> __UNIVERSE__</a><div class="links"><a href="/">みんなの__STAR__</a><a href="/cosmos">宇宙を旅する</a><a href="/questions">問い</a><a href="/submit">__STAR__を送る</a></div></nav>
+<nav class="topnav"><a class="brand" href="__BASE__/"><b>✦</b> __UNIVERSE__</a><div class="links"><a href="__BASE__/">みんなの__STAR__</a><a href="__BASE__/cosmos">宇宙を旅する</a><a href="__BASE__/questions">問い</a><a href="__BASE__/submit">__STAR__を送る</a></div></nav>
 __ADMIN_NAV__
 <main>__BODY__</main>
-<footer class="cosmos-footer"><p>アウトプットした人のおかげで、この宇宙は発展していきます。</p><a href="/admin">管理</a></footer>
+<footer class="cosmos-footer"><p>アウトプットした人のおかげで、この宇宙は発展していきます。</p><a href="__BASE__/admin">管理</a></footer>
 </div></body></html>"""
 
 
@@ -667,6 +668,7 @@ def layout(title: str, body: str, admin: bool = False) -> bytes:
         .replace("__STAR__", esc(star))
         .replace("__ADMIN_NAV__", admin_nav)
         .replace("__BODY__", body)
+        .replace("__BASE__", space_base())
     )
     return page.encode("utf-8")
 
@@ -676,6 +678,8 @@ def public_page() -> bytes:
     star = pipeline_common.worldview_term("star", "星")
     constellation = pipeline_common.worldview_term("constellation", "星座")
     cta = pipeline_common.worldview_cta()
+    base = space_base()
+    join_href = base + cta["join_url"] if cta["join_url"].startswith("/") else cta["join_url"]
     all_rows = rows("approved")
     by_parent: dict[str | None, list[sqlite3.Row]] = {}
     for r in all_rows:
@@ -683,7 +687,7 @@ def public_page() -> bytes:
     roots = list(reversed(by_parent.get(None, [])))
     voice_count = len(all_rows) - len(roots)
     with db() as conn:
-        consts = list(conn.execute("SELECT * FROM constellations ORDER BY created_at DESC"))
+        consts = list(conn.execute("SELECT * FROM constellations WHERE space_id=? ORDER BY created_at DESC", (pipeline_common.current_space_id(),)))
         hidden = pipeline_common.hidden_theme_names(conn)
 
     cards = []
@@ -700,7 +704,7 @@ def public_page() -> bytes:
           <p class="star-body">{esc(r["body"])}</p>
           <div class="tags">{tags}</div>
           {voices_block}
-          <a class="btn ghost small" href="/submit?parent_id={esc(r["id"])}">この{esc(star)}に声を寄せる</a>
+          <a class="btn ghost small" href="{base}/submit?parent_id={esc(r["id"])}">この{esc(star)}に声を寄せる</a>
         </article>'''
         )
 
@@ -716,7 +720,7 @@ def public_page() -> bytes:
             question_section = (
                 f'<section class="card question-card"><div class="q-label">今週の問い</div>'
                 f'<p class="q">{esc(latest_q)}</p>'
-                f'<a class="btn ghost small" href="/submit">この問いに{esc(star)}で応える</a></section>'
+                f'<a class="btn ghost small" href="{base}/submit">この問いに{esc(star)}で応える</a></section>'
             )
 
     def render_summary(summary_md: str) -> str:
@@ -759,7 +763,7 @@ def public_page() -> bytes:
       <h1>{esc(universe)}</h1>
       <p class="tagline">あなたの気づきが、{esc(star)}になる。</p>
       <p class="lead">講座で生まれた気づき・感想・問いがこの宇宙にアップされ、ひとつひとつが{esc(star)}として灯ります。{esc(star)}と{esc(star)}はAIによって結ばれて{esc(constellation)}になり、そこから次の問いが生まれていきます。</p>
-      <div class="cta"><a class="btn" href="/cosmos">宇宙を旅する</a><a class="btn ghost" href="{esc(cta["join_url"])}">{esc(cta["join_label"])}</a></div>
+      <div class="cta"><a class="btn" href="{base}/cosmos">宇宙を旅する</a><a class="btn ghost" href="{esc(join_href)}">{esc(cta["join_label"])}</a></div>
       <div class="stats">
         <div class="card stat"><b>{len(roots)}</b><span>{esc(star)}</span></div>
         <div class="card stat"><b>{len(consts)}</b><span>{esc(constellation)}</span></div>
@@ -774,7 +778,7 @@ def public_page() -> bytes:
       <span class="kicker">Join the Universe</span>
       <h2>あなたの気づきも、ひとつの{esc(star)}になる</h2>
       <p class="lead">{esc(cta["join_note"])}</p>
-      <div class="cta"><a class="btn" href="{esc(cta["join_url"])}">{esc(cta["join_label"])}</a><a class="btn ghost" href="/cosmos">まず宇宙を旅する</a></div>
+      <div class="cta"><a class="btn" href="{esc(join_href)}">{esc(cta["join_label"])}</a><a class="btn ghost" href="{base}/cosmos">まず宇宙を旅する</a></div>
     </section>
     '''
     return layout("みんなの" + star, body)
@@ -865,9 +869,9 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 <div class="sky"></div><div class="stars"></div><div class="stars stars2"></div>
 <canvas id="stage"></canvas>
 <div class="labels" id="labels"></div>
-<div class="cosmos-empty" id="cosmosEmpty"><span class="seed"></span><p>この宇宙は、まだ夜の底にある。<br>最初のひとつぶの光を、あなたが灯す。</p><a class="bn gold" href="/submit">最初の__STAR__を送る</a></div>
-<header class="hud-brand glass"><a href="/">← __UNIVERSE__にもどる</a><h1>宇宙を旅する</h1><p class="hint">ドラッグで回す ・ ホイールでズーム ・ __STAR__を選ぶ</p></header>
-<nav class="hud-nav glass"><a class="bn gold" href="/submit">__STAR__を送る</a></nav>
+<div class="cosmos-empty" id="cosmosEmpty"><span class="seed"></span><p>この宇宙は、まだ夜の底にある。<br>最初のひとつぶの光を、あなたが灯す。</p><a class="bn gold" href="__BASE__/submit">最初の__STAR__を送る</a></div>
+<header class="hud-brand glass"><a href="__BASE__/">← __UNIVERSE__にもどる</a><h1>宇宙を旅する</h1><p class="hint">ドラッグで回す ・ ホイールでズーム ・ __STAR__を選ぶ</p></header>
+<nav class="hud-nav glass"><a class="bn gold" href="__BASE__/submit">__STAR__を送る</a></nav>
 <section class="dock glass"><h3>テーマでたどる</h3><p class="filter-status" id="filterStatus">すべての星を表示中</p><div class="chips" id="chips"><button class="chip active" data-tag="all">すべて</button></div></section>
 <div class="zoomers glass"><button id="zin" aria-label="ズームイン">＋</button><button id="zout" aria-label="ズームアウト">−</button></div>
 <aside class="detail glass" id="detail" aria-live="polite"></aside>
@@ -1016,6 +1020,7 @@ def cosmos_page() -> bytes:
         .replace("__UNIVERSE__", esc(universe))
         .replace("__STAR__", esc(star))
         .replace("__DATA__", data_json)
+        .replace("__BASE__", space_base())
     )
     return page.encode("utf-8")
 
@@ -1026,7 +1031,7 @@ def questions_page() -> bytes:
     approved = rows("approved")
     insights = weekly_insights(approved)
     with db() as conn:
-        consts = list(conn.execute("SELECT * FROM constellations ORDER BY created_at DESC"))
+        consts = list(conn.execute("SELECT * FROM constellations WHERE space_id=? ORDER BY created_at DESC", (pipeline_common.current_space_id(),)))
 
     latest_questions = []
     for c in consts[:5]:
@@ -1054,7 +1059,7 @@ def questions_page() -> bytes:
       <h1>問いのページ</h1>
       <p class="tagline">みんなの{esc(star)}から、次の問いが生まれます。</p>
       <p class="lead">公式LINEにそのまま気づき・感想・問いを送ると、掲載確認のあとすぐにこの公開サイトと宇宙へ反映されます。特定の{esc(star)}に応えたい時だけ、宇宙ページの返信用テキストを使ってください。</p>
-      <div class="cta"><a class="btn" href="/cosmos">宇宙を旅する</a><a class="btn ghost" href="#send">LINEで{esc(star)}を送る</a></div>
+      <div class="cta"><a class="btn" href="{space_base()}/cosmos">宇宙を旅する</a><a class="btn ghost" href="#send">LINEで{esc(star)}を送る</a></div>
     </header>
     <h2>今、浮かんでいる問い</h2>
     {question_cards or '<div class="card">まだ問いは生成されていません。</div>'}
@@ -1080,7 +1085,7 @@ def submit_page(parent_id: str = "") -> bytes:
     body = f'''
     <h1>{esc(star)}を送る</h1>
     <div class="card notice">あなたの気づきが、この宇宙の{esc(star)}になります。送信後すぐに公開ページに灯ります。<br><span class="small">LINEからも送れます。LINEの場合は「名前あり・匿名・掲載しない」を選択できます。</span></div>
-    <form class="card" method="post" action="/submit">
+    <form class="card" method="post" action="{space_base()}/submit">
       <input type="hidden" name="parent_id" value="{esc(parent_id)}">
       {reply_note}
       <p><label>表示名（省略すると匿名になります）<br><input name="display_name" placeholder="例：ノビー"></label></p>
@@ -1726,6 +1731,22 @@ def is_admin_path(path: str) -> bool:
     )
 
 
+def resolve_space_path(path: str) -> tuple[str, str]:
+    """URLパスから (space_id, ルートパス) を取り出す。
+    /s/<slug>/... → (slug, /...)。/s/ が無ければデフォルト宇宙(noby)でパスはそのまま。"""
+    if path.startswith("/s/"):
+        slug, slash, tail = path[3:].partition("/")
+        if slug:
+            return slug, ("/" + tail if slash else "/")
+    return pipeline_common.DEFAULT_SPACE_ID, path
+
+
+def space_base() -> str:
+    """現在の宇宙のURL接頭辞。デフォルト宇宙は空文字、他は /s/<slug>。"""
+    sid = pipeline_common.current_space_id()
+    return "" if sid == pipeline_common.DEFAULT_SPACE_ID else f"/s/{sid}"
+
+
 class Handler(BaseHTTPRequestHandler):
     def admin_authorized(self) -> bool:
         """ADMIN_TOKEN が設定されていれば Basic 認証のパスワードと一致を要求する。
@@ -1858,19 +1879,26 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
-            if is_admin_path(parsed.path) and not self.require_admin():
+            space_id, route_path = resolve_space_path(parsed.path)
+            with db() as conn:
+                if space_id != pipeline_common.DEFAULT_SPACE_ID and not pipeline_common.space_exists(conn, space_id):
+                    self.send_html(layout("404", "<h1>404</h1><p>この宇宙は見つかりませんでした。</p>"), 404)
+                    return
+                wv = pipeline_common.load_worldview_for_space(conn, space_id)
+            pipeline_common.set_current_space(space_id, wv)
+            if is_admin_path(route_path) and not self.require_admin():
                 return
-            if parsed.path == "/":
+            if route_path == "/":
                 self.send_html(public_page())
-            elif parsed.path == "/cosmos":
+            elif route_path == "/cosmos":
                 self.send_html(cosmos_page())
-            elif parsed.path == "/questions":
+            elif route_path == "/questions":
                 self.send_html(questions_page())
-            elif parsed.path == "/submit":
+            elif route_path == "/submit":
                 self.send_html(submit_page(qs.get("parent_id", [""])[0]))
-            elif parsed.path == "/admin":
+            elif route_path == "/admin":
                 self.send_html(admin_page())
-            elif parsed.path == "/admin/themes":
+            elif route_path == "/admin/themes":
                 message = ""
                 if qs.get("done"):
                     message = {
@@ -1880,7 +1908,7 @@ class Handler(BaseHTTPRequestHandler):
                         "show": "テーマを再表示しました。",
                     }.get(qs["done"][0], "")
                 self.send_html(themes_admin_page(message))
-            elif parsed.path == "/admin/recordings":
+            elif route_path == "/admin/recordings":
                 message = ""
                 if qs.get("created"):
                     message = f"原液を登録しました。ID: {qs['created'][0]}"
@@ -1889,34 +1917,34 @@ class Handler(BaseHTTPRequestHandler):
                 elif qs.get("error") == ["empty"]:
                     message = "タイトルまたはパスを入力してください。"
                 self.send_html(recordings_page(message))
-            elif parsed.path == "/admin/followup-suggestions":
+            elif route_path == "/admin/followup-suggestions":
                 self.send_html(followup_suggestions_page())
-            elif parsed.path == "/admin/followups":
+            elif route_path == "/admin/followups":
                 message = ""
                 if qs.get("created"):
                     message = f"フォローアップを登録しました。ID: {qs['created'][0]}"
                 elif qs.get("error") == ["missing"]:
                     message = "星座とメモを入力してください。"
                 self.send_html(followups_page(message))
-            elif parsed.path == "/admin/obsidian-vault":
+            elif route_path == "/admin/obsidian-vault":
                 message = ""
                 if qs.get("exported"):
                     message = f"公開用Vaultへ書き出しました: {qs['exported'][0]}"
                 elif qs.get("error") == ["second-brain"]:
                     message = "個人Second Brainには書き出せません。別保管庫を指定してください。"
                 self.send_html(obsidian_vault_page(message))
-            elif parsed.path == "/api/constellations":
+            elif route_path == "/api/constellations":
                 self.send_json(api_constellations_payload(qs.get("week", [None])[0]))
-            elif parsed.path in ("/factory", "/studio"):
+            elif route_path in ("/factory", "/studio"):
                 message = ""
                 if qs.get("created"):
                     message = f"原液を保存し、教材化メモを生成しました。ID: {qs['created'][0]}"
                 elif qs.get("error") == ["empty"]:
                     message = "原液テキストが空だったため、保存しませんでした。"
                 self.send_html(factory_page(message))
-            elif parsed.path in ("/weekly", "/editor"):
+            elif route_path in ("/weekly", "/editor"):
                 self.send_html(weekly_page())
-            elif parsed.path == "/health":
+            elif route_path == "/health":
                 try:
                     with db() as conn:
                         conn.execute("SELECT 1").fetchone()
@@ -1934,28 +1962,37 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(layout("500", "<h1>500 サーバーエラー</h1><p>しばらくしてから再度お試しください。</p>"), 500)
             except Exception:
                 pass
+        finally:
+            pipeline_common.clear_current_space()
 
     def do_POST(self) -> None:
-        path = urlparse(self.path).path
+        space_id, path = resolve_space_path(urlparse(self.path).path)
         try:
+            with db() as conn:
+                if space_id != pipeline_common.DEFAULT_SPACE_ID and not pipeline_common.space_exists(conn, space_id):
+                    self.send_html(layout("404", "<h1>404</h1>"), 404)
+                    return
+                wv = pipeline_common.load_worldview_for_space(conn, space_id)
+            pipeline_common.set_current_space(space_id, wv)
             if is_admin_path(path) and not self.require_admin():
                 return
             if path in ("/api/line-webhook", "/webhook/line"):
                 self.handle_line_webhook(self.read_raw())
             elif path == "/submit":
+                base = space_base()
                 data = self.read_form_or_json()
                 display_name = (data.get("display_name") or "").strip() or "匿名参加者"
                 body = (data.get("body") or "").strip()
                 if not body:
-                    self.redirect("/submit?error=empty")
+                    self.redirect(f"{base}/submit?error=empty")
                     return
                 if len(body) > MAX_BODY_CHARS:
-                    self.redirect("/submit?error=toolong")
+                    self.redirect(f"{base}/submit?error=toolong")
                     return
                 display_name = display_name[:MAX_NAME_CHARS]
                 parent_id = (data.get("parent_id") or "").strip() or None
                 insert_reflection("web", display_name, body, parent_id=parent_id, status="approved")
-                self.redirect("/?sent=1")
+                self.redirect(f"{base}/?sent=1")
             elif path == "/api/admin/approve":
                 data = self.read_form_or_json()
                 approve(data.get("id", ""))
@@ -2057,6 +2094,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(layout("500", "<h1>500 サーバーエラー</h1><p>しばらくしてから再度お試しください。</p>"), 500)
             except Exception:
                 pass
+        finally:
+            pipeline_common.clear_current_space()
 
 
 def main() -> None:
