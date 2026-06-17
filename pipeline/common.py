@@ -408,6 +408,86 @@ def ensure_theme(conn, name: str) -> None:
     )
 
 
+def hidden_theme_names(conn) -> set:
+    """非表示テーマ名の集合（公開ページ・宇宙でのフィルタ用）。"""
+    rows = conn.execute("SELECT name FROM themes WHERE status='hidden'").fetchall()
+    return {row["name"] for row in rows}
+
+
+def theme_overview(conn) -> list[dict]:
+    """テーマ一覧 + 使用件数（承認済みの気づき基準）。管理画面の表示用。"""
+    counts: dict[str, int] = {}
+    for r in conn.execute("SELECT tags FROM reflections WHERE status='approved'").fetchall():
+        for tag in parse_json_list(r["tags"], default=()):
+            if tag and tag != "未分類":
+                counts[tag] = counts.get(tag, 0) + 1
+    rows = conn.execute(
+        "SELECT name, status, merged_into FROM themes ORDER BY created_at ASC, name ASC"
+    ).fetchall()
+    known = {row["name"] for row in rows}
+    overview = [
+        {"name": row["name"], "status": row["status"], "merged_into": row["merged_into"], "count": counts.get(row["name"], 0)}
+        for row in rows
+    ]
+    # themes表に未登録だが実データに付いているタグも拾う（保険）
+    for name, count in counts.items():
+        if name not in known:
+            overview.append({"name": name, "status": "active", "merged_into": None, "count": count})
+    return overview
+
+
+def _replace_tag_everywhere(conn, old: str, new: str | None) -> None:
+    """全reflectionsのtags JSON内の old を new に置換（new=None なら削除）。重複排除・順序維持。"""
+    rows = conn.execute("SELECT id, tags FROM reflections").fetchall()
+    for r in rows:
+        tags = parse_json_list(r["tags"], default=())
+        if old not in tags:
+            continue
+        out: list[str] = []
+        for tag in tags:
+            repl = new if tag == old else tag
+            if repl and repl not in out:
+                out.append(repl)
+        conn.execute(
+            "UPDATE reflections SET tags=? WHERE id=?",
+            (json.dumps(out or ["未分類"], ensure_ascii=False), r["id"]),
+        )
+
+
+def rename_theme(conn, old: str, new: str) -> None:
+    """テーマを改名する（実データのタグも一括置換）。"""
+    old = (old or "").strip()
+    new = (new or "").strip()
+    if not old or not new or old == new:
+        return
+    _replace_tag_everywhere(conn, old, new)
+    ensure_theme(conn, new)
+    conn.execute("DELETE FROM themes WHERE name=?", (old,))
+
+
+def merge_theme(conn, src: str, dst: str) -> None:
+    """テーマ src を dst に統合する（タグ置換 + src は履歴として hidden 化）。"""
+    src = (src or "").strip()
+    dst = (dst or "").strip()
+    if not src or not dst or src == dst:
+        return
+    _replace_tag_everywhere(conn, src, dst)
+    ensure_theme(conn, dst)
+    ensure_theme(conn, src)
+    conn.execute("UPDATE themes SET status='hidden', merged_into=? WHERE name=?", (dst, src))
+
+
+def set_theme_status(conn, name: str, status: str) -> None:
+    """テーマの表示/非表示を切り替える。"""
+    name = (name or "").strip()
+    if not name or status not in ("active", "hidden"):
+        return
+    ensure_theme(conn, name)
+    conn.execute("UPDATE themes SET status=? WHERE name=?", (status, name))
+    if status == "active":
+        conn.execute("UPDATE themes SET merged_into=NULL WHERE name=?", (name,))
+
+
 def normalize_text(text: str) -> str:
     return " ".join((text or "").replace("\r\n", "\n").replace("\r", "\n").split())
 

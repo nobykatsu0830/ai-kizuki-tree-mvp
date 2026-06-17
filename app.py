@@ -470,7 +470,8 @@ def weekly_insights(reflection_rows) -> dict:
     }
 
 
-def cosmos_nodes(reflection_rows) -> list[dict]:
+def cosmos_nodes(reflection_rows, hidden: set | None = None) -> list[dict]:
+    hidden = hidden or set()
     labels = {row_get(r, "id"): f"{row_get(r, 'display_name', '参加者')}の気づき" for r in reflection_rows}
     nodes: list[dict] = []
     for i, r in enumerate(reflection_rows):
@@ -480,6 +481,8 @@ def cosmos_nodes(reflection_rows) -> list[dict]:
             tags = json.loads(row_get(r, "tags", "[]"))
         except json.JSONDecodeError:
             tags = ["未分類"]
+        if hidden:
+            tags = [t for t in tags if t not in hidden] or ["未分類"]
         nodes.append(
             {
                 "id": rid,
@@ -650,7 +653,7 @@ def layout(title: str, body: str, admin: bool = False) -> bytes:
     if admin:
         admin_nav = (
             '<nav class="adminnav"><span class="adminnav-label">管理</span>'
-            '<a href="/admin">公開管理</a><a href="/admin/recordings">原液</a>'
+            '<a href="/admin">公開管理</a><a href="/admin/themes">テーマ</a><a href="/admin/recordings">原液</a>'
             '<a href="/admin/followup-suggestions">応答候補</a><a href="/admin/followups">フォローアップ</a>'
             '<a href="/admin/obsidian-vault">公開Vault</a>'
             '<a href="/factory">教材化</a><a href="/weekly">週次編集</a></nav>'
@@ -681,10 +684,11 @@ def public_page() -> bytes:
     voice_count = len(all_rows) - len(roots)
     with db() as conn:
         consts = list(conn.execute("SELECT * FROM constellations ORDER BY created_at DESC"))
+        hidden = pipeline_common.hidden_theme_names(conn)
 
     cards = []
     for r in roots:
-        tags = "".join(f'<span class="tag">{esc(t)}</span>' for t in parse_tags(r["tags"]))
+        tags = "".join(f'<span class="tag">{esc(t)}</span>' for t in parse_tags(r["tags"]) if t not in hidden)
         voices = "".join(
             f'<div class="voice"><span class="voice-who">{esc(c["display_name"])}</span><p>{esc(c["body"])}</p></div>'
             for c in by_parent.get(r["id"], [])
@@ -1002,7 +1006,9 @@ document.getElementById('zout').onclick=()=>zoom=Math.max(.74,zoom-.08);
 def cosmos_page() -> bytes:
     universe = pipeline_common.worldview_term("universe", "気づきの宇宙")
     star = pipeline_common.worldview_term("star", "星")
-    nodes = cosmos_nodes(cosmos_rows())
+    with db() as conn:
+        hidden = pipeline_common.hidden_theme_names(conn)
+    nodes = cosmos_nodes(cosmos_rows(), hidden=hidden)
     data_json = json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/")
     page = (
         COSMOS_SHELL
@@ -1173,6 +1179,68 @@ def admin_page() -> bytes:
     if pending_cards:
         body += "<h2>旧承認待ち</h2>" + "".join(pending_cards)
     return layout("事務局管理", body, admin=True)
+
+
+def themes_admin_page(message: str = "") -> bytes:
+    with db() as conn:
+        overview = pipeline_common.theme_overview(conn)
+    active = [t for t in overview if t["status"] == "active"]
+    hidden = [t for t in overview if t["status"] != "active"]
+    active.sort(key=lambda t: (-t["count"], t["name"]))
+    # 統合先の選択肢（アクティブなテーマ名）
+    options = "".join(f'<option value="{esc(t["name"])}">{esc(t["name"])}</option>' for t in active)
+    notice = f'<div class="card notice">{esc(message)}</div>' if message else ""
+
+    def card(t: dict) -> str:
+        name = t["name"]
+        is_active = t["status"] == "active"
+        merged = f'<span class="small">→ {esc(t["merged_into"])} に統合</span>' if t.get("merged_into") else ""
+        toggle = (
+            f'<form method="post" action="/admin/themes" style="display:inline">'
+            f'<input type="hidden" name="action" value="hide"><input type="hidden" name="name" value="{esc(name)}">'
+            f'<button class="btn ghost small">非表示にする</button></form>'
+            if is_active
+            else
+            f'<form method="post" action="/admin/themes" style="display:inline">'
+            f'<input type="hidden" name="action" value="show"><input type="hidden" name="name" value="{esc(name)}">'
+            f'<button class="btn ghost small">再表示する</button></form>'
+        )
+        rename = (
+            f'<form method="post" action="/admin/themes" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
+            f'<input type="hidden" name="action" value="rename"><input type="hidden" name="old" value="{esc(name)}">'
+            f'<input name="new" placeholder="新しい名前" style="flex:1;min-width:120px">'
+            f'<button class="btn ghost small">改名</button></form>'
+        )
+        merge = (
+            f'<form method="post" action="/admin/themes" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
+            f'<input type="hidden" name="action" value="merge"><input type="hidden" name="src" value="{esc(name)}">'
+            f'<select name="dst" style="flex:1;min-width:120px"><option value="">統合先を選ぶ…</option>{options}</select>'
+            f'<button class="btn ghost small">統合</button></form>'
+            if is_active and len(active) > 1
+            else ""
+        )
+        badge = "" if is_active else '<span class="tag" style="opacity:.7">非表示</span>'
+        return (
+            f'<div class="card">'
+            f'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+            f'<h3 style="margin:0">{esc(name)}</h3>{badge}'
+            f'<span class="small">{t["count"]}件の星 {merged}</span>'
+            f'<span style="margin-left:auto">{toggle}</span></div>'
+            f'{rename if is_active else ""}{merge}'
+            f'</div>'
+        )
+
+    active_section = "".join(card(t) for t in active) or '<div class="card">まだテーマがありません。気づきが集まると、夜のバッチで自動的に生まれてきます。</div>'
+    hidden_section = ("<h2>非表示のテーマ</h2>" + "".join(card(t) for t in hidden)) if hidden else ""
+    body = (
+        "<h1>テーマを整える</h1>"
+        '<div class="card notice">夜のバッチでAIが自動的にテーマを付け、新しいテーマも生まれます。ここでは、似たテーマの<b>統合</b>・名前の<b>改名</b>・要らないテーマの<b>非表示</b>だけを行います。非表示にしたテーマは公開ページと宇宙から消えます（データは残ります）。</div>'
+        + notice
+        + "<h2>いま使われているテーマ</h2>"
+        + active_section
+        + hidden_section
+    )
+    return layout("テーマを整える", body, admin=True)
 
 
 def factory_page(message: str = "") -> bytes:
@@ -1802,6 +1870,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(submit_page(qs.get("parent_id", [""])[0]))
             elif parsed.path == "/admin":
                 self.send_html(admin_page())
+            elif parsed.path == "/admin/themes":
+                message = ""
+                if qs.get("done"):
+                    message = {
+                        "rename": "テーマを改名しました。",
+                        "merge": "テーマを統合しました。",
+                        "hide": "テーマを非表示にしました。",
+                        "show": "テーマを再表示しました。",
+                    }.get(qs["done"][0], "")
+                self.send_html(themes_admin_page(message))
             elif parsed.path == "/admin/recordings":
                 message = ""
                 if qs.get("created"):
@@ -1888,6 +1966,20 @@ class Handler(BaseHTTPRequestHandler):
                 hide_reflection(data.get("id", ""))
                 publish_static_site_safely("Hide public kizuki")
                 self.redirect("/admin")
+            elif path == "/admin/themes":
+                data = self.read_form_or_json()
+                action = data.get("action", "")
+                with db() as conn:
+                    if action == "rename":
+                        pipeline_common.rename_theme(conn, data.get("old", ""), data.get("new", ""))
+                    elif action == "merge":
+                        pipeline_common.merge_theme(conn, data.get("src", ""), data.get("dst", ""))
+                    elif action == "hide":
+                        pipeline_common.set_theme_status(conn, data.get("name", ""), "hidden")
+                    elif action == "show":
+                        pipeline_common.set_theme_status(conn, data.get("name", ""), "active")
+                publish_static_site_safely(f"Theme {action}")
+                self.redirect(f"/admin/themes?done={action}" if action else "/admin/themes")
             elif path == "/api/factory/create":
                 data = self.read_form_or_json()
                 raw_text = data.get("raw_text", "")

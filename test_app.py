@@ -299,6 +299,77 @@ class LineWebhookHelpersTest(unittest.TestCase):
             self.assertTrue(row["themed_at"])  # 処理済みの印
             self.assertIn("解放感", names)  # 新テーマが語彙に創発
 
+    def test_rename_theme_replaces_tags_everywhere(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    ("r1", "web", "X", "本文", json.dumps(["待つ", "安心"], ensure_ascii=False),
+                     "approved", pipeline_common.now_iso(), pipeline_common.default_space_id(), "insight", "universe"),
+                )
+                pipeline_common.ensure_theme(conn, "待つ")
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.rename_theme(conn, "待つ", "待つこと")
+            with pipeline_common.connect(db_path) as conn:
+                row = conn.execute("SELECT tags FROM reflections WHERE id='r1'").fetchone()
+                names = pipeline_common.active_theme_names(conn)
+            self.assertEqual(json.loads(row["tags"]), ["待つこと", "安心"])
+            self.assertIn("待つこと", names)
+            self.assertNotIn("待つ", names)
+
+    def test_merge_theme_dedupes_and_hides_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    ("r1", "web", "X", "本文", json.dumps(["笑い", "ユーモア"], ensure_ascii=False),
+                     "approved", pipeline_common.now_iso(), pipeline_common.default_space_id(), "insight", "universe"),
+                )
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.merge_theme(conn, "ユーモア", "笑い")
+            with pipeline_common.connect(db_path) as conn:
+                row = conn.execute("SELECT tags FROM reflections WHERE id='r1'").fetchone()
+                hidden = pipeline_common.hidden_theme_names(conn)
+                active = pipeline_common.active_theme_names(conn)
+            self.assertEqual(json.loads(row["tags"]), ["笑い"])  # 重複排除
+            self.assertIn("ユーモア", hidden)  # 統合元は非表示で履歴に残る
+            self.assertNotIn("ユーモア", active)
+
+    def test_set_theme_status_hides_from_public(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.ensure_theme(conn, "未分類っぽいテーマ")
+                pipeline_common.set_theme_status(conn, "未分類っぽいテーマ", "hidden")
+            with pipeline_common.connect(db_path) as conn:
+                self.assertIn("未分類っぽいテーマ", pipeline_common.hidden_theme_names(conn))
+
+    def test_cosmos_nodes_filters_hidden_themes(self):
+        rows = [{"id": "n1", "parent_id": None, "display_name": "A", "body": "本文",
+                 "tags": json.dumps(["笑い", "ボツ"], ensure_ascii=False), "source": "line"}]
+        nodes = app.cosmos_nodes(rows, hidden={"ボツ"})
+        self.assertEqual(nodes[0]["tags"], ["笑い"])
+
+    def test_themes_admin_page_renders(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db_path = app.DB_PATH
+            app.DB_PATH = Path(tmpdir) / "k.sqlite3"
+            try:
+                app.init_db()
+                app.insert_reflection("web", "X", "ジブリッシュで笑った", status="approved")
+                html = app.themes_admin_page().decode("utf-8")
+                self.assertIn("テーマを整える", html)
+                self.assertIn("/admin/themes", html)
+            finally:
+                app.DB_PATH = original_db_path
+
     def test_batch_pending_rows_excludes_already_themed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "kizuki_tree.sqlite3"
