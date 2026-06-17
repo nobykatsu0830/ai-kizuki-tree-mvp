@@ -717,7 +717,7 @@ def public_page() -> bytes:
             relay_badge = f'<div class="star-relay">☄ この{esc(star)}は「{esc(const_by_id[const_id])}」につながっています</div>'
         cards.append(
             f'''<article class="card star-card">
-          <header><span class="star-dot"></span><span class="star-who">{esc(r["display_name"])}</span><span class="star-kind">{esc(r["source"])}</span></header>
+          <header><span class="star-dot"></span><span class="star-who">{esc(r["display_name"])}</span></header>
           <p class="star-body">{esc(r["body"])}</p>
           <div class="tags">{tags}</div>
           {relay_badge}
@@ -896,6 +896,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 .detail h2{font-family:var(--serif);font-weight:600;font-size:21px;margin:0 0 8px;color:#f6f3e7;letter-spacing:.06em}
 .detail .meta{font-size:12px;color:var(--dim);margin:0 0 6px}
 .detail .body{font-family:var(--serif);margin:0;color:#efece0;line-height:2;font-size:15px;max-height:34vh;overflow:auto}
+.detail .voice-link{display:inline-flex;align-items:center;justify-content:center;margin-top:16px;padding:9px 20px;border-radius:999px;border:1px solid rgba(238,201,111,.5);background:rgba(255,255,255,.04);color:var(--gold-soft);font-size:13px;font-weight:700;letter-spacing:.06em;text-decoration:none;transition:.25s}
+.detail .voice-link:hover{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241a05;border-color:transparent}
 .cmd{display:flex;gap:8px;align-items:center;margin-top:14px;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:12px;color:var(--gold-soft);word-break:break-all}
 .cmd button{flex:none;appearance:none;border:1px solid rgba(238,201,111,.5);background:none;color:var(--gold-soft);border-radius:999px;padding:4px 12px;font-size:11.5px;font-weight:700;cursor:pointer}
 .cmd button:hover{background:rgba(238,201,111,.15)}
@@ -928,6 +930,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 <script>
 const nodes=__DATA__;
 const STAR_TERM="__STAR__";
+const BASE="__BASE__";
 const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
 const labels=document.getElementById('labels'),detail=document.getElementById('detail'),chips=document.getElementById('chips'),filterStatus=document.getElementById('filterStatus');
 const colors=['#ffe9b0','#9fd9c9','#bfaef2','#f2a9b8','#9cc6ff','#f0c869'];
@@ -1038,14 +1041,9 @@ function select(id){selected=nodeBy(id);if(!selected)return;setActiveLabel(id);
   <span class="pill">${escapeHtml(selected.constellation_name||(selected.tags&&selected.tags[0])||'未分類')}</span>
   <h2>${escapeHtml(selected.name)}の${STAR_TERM}</h2>${constellation}${reply}
   <p class="body">${escapeHtml(selected.body)}</p>
-  <p class="hint">気づきが生まれたら、そのまま公式LINEに送るだけで宇宙に反映されます。特定の星に応えたい時だけ、下の返信用テキストを使ってください。</p>
-  <div class="cmd"><span>この星に応える時だけ：返信:${escapeHtml(selected.id)} あなたの言葉</span><button id="copycmd">コピー</button></div>`;
+  <a class="btn ghost small voice-link" href="${BASE}/submit?parent_id=${encodeURIComponent(selected.id)}">この${STAR_TERM}に声を寄せる</a>`;
  detail.classList.add('show');
- detail.querySelector('.close').onclick=()=>{selected=null;setActiveLabel(null);detail.classList.remove('show')};
- const cp=detail.querySelector('#copycmd');
- cp.onclick=()=>{const txt='返信:'+selected.id+' ';
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(()=>{cp.textContent='コピーしました';setTimeout(()=>cp.textContent='コピー',1600)})}
-  else{cp.textContent=txt}}}
+ detail.querySelector('.close').onclick=()=>{selected=null;setActiveLabel(null);detail.classList.remove('show')};}
 canvas.addEventListener('pointerdown',e=>{drag=true;moved=false;last={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId)});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;moved=true;
  rotY+=(e.clientX-last.x)*.006;rotX+=(e.clientY-last.y)*.006;
@@ -1078,6 +1076,7 @@ def cosmos_page() -> bytes:
 def questions_page() -> bytes:
     star = pipeline_common.worldview_term("star", "星")
     constellation = pipeline_common.worldview_term("constellation", "星座")
+    base = space_base()
     approved = rows("approved")
     insights = weekly_insights(approved)
     with db() as conn:
@@ -1092,7 +1091,8 @@ def questions_page() -> bytes:
         latest_questions = [("いまの問い", q) for q in insights["next_live_questions"]]
 
     question_cards = "".join(
-        f'<section class="card question-card"><div class="q-label">{esc(label)}</div><p class="q">{esc(q)}</p></section>'
+        f'<section class="card question-card"><div class="q-label">{esc(label)}</div><p class="q">{esc(q)}</p>'
+        f'<a class="btn ghost small" href="{base}/submit">この問いに{esc(star)}で応える</a></section>'
         for label, q in latest_questions[:5]
     )
     theme_cards = "".join(
@@ -1100,7 +1100,9 @@ def questions_page() -> bytes:
         for item in insights["frequent_themes"][:6]
     )
     deep_cards = "".join(
-        f'<section class="card star-card"><header><span class="star-dot"></span><span class="star-who">{esc(item["display_name"])}</span></header><p class="star-body">{esc(item["body"])}</p></section>'
+        f'<section class="card star-card"><header><span class="star-dot"></span><span class="star-who">{esc(item["display_name"])}</span></header>'
+        f'<p class="star-body">{esc(item["body"])}</p>'
+        f'<a class="btn ghost small" href="{base}/submit?parent_id={esc(item["id"])}">この{esc(star)}に声を寄せる</a></section>'
         for item in insights["deep_candidates"][:3]
     )
     body = f'''
@@ -1108,8 +1110,8 @@ def questions_page() -> bytes:
       <div class="kicker">Questions from the Universe</div>
       <h1>問いのページ</h1>
       <p class="tagline">みんなの{esc(star)}から、次の問いが生まれます。</p>
-      <p class="lead">公式LINEにそのまま気づき・感想・問いを送ると、掲載確認のあとすぐにこの公開サイトと宇宙へ反映されます。特定の{esc(star)}に応えたい時だけ、宇宙ページの返信用テキストを使ってください。</p>
-      <div class="cta"><a class="btn" href="{space_base()}/cosmos">宇宙を旅する</a><a class="btn ghost" href="#send">LINEで{esc(star)}を送る</a></div>
+      <p class="lead">気づき・感想・問いを投稿フォームから送ると、掲載確認のあとすぐにこの公開サイトと宇宙に灯ります。特定の{esc(star)}に応えたい時は、宇宙ページかこのページでその{esc(star)}を開き「声を寄せる」から送ってください。</p>
+      <div class="cta"><a class="btn" href="{base}/cosmos">宇宙を旅する</a><a class="btn ghost" href="{base}/submit">{esc(star)}を送る</a></div>
     </header>
     <h2>今、浮かんでいる問い</h2>
     {question_cards or '<div class="card">まだ問いは生成されていません。</div>'}
@@ -1119,8 +1121,9 @@ def questions_page() -> bytes:
     {deep_cards or '<div class="card">公開された気づきが増えると、ここに表示されます。</div>'}
     <section id="send" class="card notice">
       <h2>投稿方法</h2>
-      <p>通常は、公式LINEに気づき・感想・問いをそのまま送ってください。掲載確認で「名前ありでOK」または「匿名ならOK」を選ぶと、この公開サイトが自動で更新されます。問題がある投稿だけ、あとから事務局が非公開にします。</p>
-      <p class="small">特定の星に返信したい場合だけ、宇宙ページで星を開き、表示される「返信:ID あなたの言葉」を使います。</p>
+      <p>投稿フォームから気づき・感想・問いを送ってください。送信後すぐにこの公開サイトと宇宙に灯ります。問題がある投稿だけ、あとから事務局が非公開にします。</p>
+      <p class="small">特定の{esc(star)}に応えたい時は、その{esc(star)}を開いて「この{esc(star)}に声を寄せる」から送ると、返信としてつながります。</p>
+      <div class="cta"><a class="btn" href="{base}/submit">{esc(star)}を送る</a></div>
     </section>
     '''
     return layout("問い", body)
@@ -1134,7 +1137,7 @@ def submit_page(parent_id: str = "") -> bytes:
     sent_banner = '<div class="card notice" style="border-color:var(--gold)">✦ あなたの星が宇宙に灯りました。ありがとうございます。</div>' if "" else ""
     body = f'''
     <h1>{esc(star)}を送る</h1>
-    <div class="card notice">あなたの気づきが、この宇宙の{esc(star)}になります。送信後すぐに公開ページに灯ります。<br><span class="small">LINEからも送れます。LINEの場合は「名前あり・匿名・掲載しない」を選択できます。</span></div>
+    <div class="card notice">あなたの気づきが、この宇宙の{esc(star)}になります。送信後すぐに公開ページに灯ります。<br><span class="small">表示名は省略すると匿名になります。掲載をやめたい時は事務局までご連絡ください。</span></div>
     <form class="card" method="post" action="{space_base()}/submit">
       <input type="hidden" name="parent_id" value="{esc(parent_id)}">
       {reply_note}
@@ -1167,7 +1170,7 @@ def export_static_site(deploy_dir: Path = STATIC_DEPLOY_DIR) -> dict[str, str]:
         "index.html": staticize_html(public_page()),
         "cosmos.html": staticize_html(cosmos_page()),
         "questions.html": staticize_html(questions_page()),
-        "README.md": "# 気づきの宇宙\n\nLINE公式アカウントで掲載OKになった気づき・問い・星座を公開する静的サイトです。\n",
+        "README.md": "# 気づきの宇宙\n\n投稿フォームから掲載OKになった気づき・問い・星座を公開する静的サイトです。\n",
     }
     for filename, content in files.items():
         (deploy_dir / filename).write_text(content, encoding="utf-8")
@@ -1228,7 +1231,7 @@ def admin_page() -> bytes:
         </div>""")
     body = """
     <h1>事務局管理</h1>
-    <div class="card notice">現在は、LINEで掲載OKが押されたら自動で公開サイトに反映されます。この画面では、問題がある星だけを後から非公開にします。</div>
+    <div class="card notice">投稿フォームから送られた星は、掲載確認のあと自動で公開サイトに反映されます。この画面では、問題がある星だけを後から非公開にします。</div>
     <h2>公開中の星</h2>
     """ + ("".join(published_cards) or '<div class="card">公開中の星はありません。</div>')
     if pending_cards:
@@ -1589,7 +1592,7 @@ def obsidian_vault_page(message: str = "", manifest: dict | None = None) -> byte
     <section class="card">
       <h2>想定する使い方</h2>
       <ol>
-        <li>LINE公式から届いた声を同意・承認する</li>
+        <li>投稿フォームから届いた声を承認する</li>
         <li>星座化する</li>
         <li>このページから独立Vaultへ書き出す</li>
         <li>Obsidianで <code>{esc(default_path)}</code> を別Vaultとして開く</li>
