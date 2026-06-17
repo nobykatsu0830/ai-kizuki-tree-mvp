@@ -175,17 +175,37 @@ def apply_classification(conn, results: list) -> int:
     return updated
 
 
+def weave_all_spaces(conn) -> dict:
+    """全スペースで星座を編み直し、光のリレーの出来事（誕生・成長）を記録する。
+
+    all_time=True で週をまたいで古い星も繋ぎ直すため、過去の気づきが
+    後から新しい星座に「生かされる」動きが relay_events に残る。
+    """
+    try:
+        space_ids = [s["id"] for s in pc.list_spaces(conn)] or [pc.DEFAULT_SPACE_ID]
+    except Exception:
+        space_ids = [pc.DEFAULT_SPACE_ID]
+    total = 0
+    for sid in space_ids:
+        created = pc.constellate_stars(conn, space_id=sid, all_time=True)
+        total += len(created)
+    return {"spaces": len(space_ids), "constellations": total}
+
+
 def run(limit: int = BATCH_LIMIT) -> int:
     with pc.connect(pc.DEFAULT_DB_PATH) as conn:
         rows = pending_rows(conn, limit)
-        if not rows:
+        updated = 0
+        if rows:
+            theme_names = pc.active_theme_names(conn)
+            prompt = build_prompt(theme_names, rows)
+            result = classify_with_codex(prompt)
+            updated = apply_classification(conn, result.get("results", []))
+            print(f"分類完了: {updated}/{len(rows)} 件を更新しました。")
+        else:
             print("分類対象の気づきはありません。")
-            return 0
-        theme_names = pc.active_theme_names(conn)
-        prompt = build_prompt(theme_names, rows)
-        result = classify_with_codex(prompt)
-        updated = apply_classification(conn, result.get("results", []))
-        print(f"分類完了: {updated}/{len(rows)} 件を更新しました。")
+        weave = weave_all_spaces(conn)
+        print(f"星座を編みました: {weave['spaces']}スペース / {weave['constellations']}星座（光のリレー更新）")
         return updated
 
 

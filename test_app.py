@@ -675,5 +675,102 @@ class LineWebhookHelpersTest(unittest.TestCase):
             self.assertIn("[[Tags/待つ]]", star_text)
 
 
+class RelayEventsTest(unittest.TestCase):
+    def _insert(self, conn, rid, name, body, tags, created_at=None, space_id=None):
+        conn.execute(
+            """
+            INSERT INTO reflections
+            (id, parent_id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility)
+            VALUES (?, NULL, 'test', ?, ?, ?, 'approved', ?, ?, ?, 'universe')
+            """,
+            (
+                rid,
+                name,
+                body,
+                json.dumps(tags, ensure_ascii=False),
+                created_at or pipeline_common.now_iso(),
+                space_id or pipeline_common.default_space_id(),
+                pipeline_common.infer_star_kind(body),
+            ),
+        )
+
+    def test_constellate_records_born_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                self._insert(conn, "s1", "Aさん", "待つことが苦手でした。", ["待つ"])
+                self._insert(conn, "s2", "Bさん", "待つ時間にそわそわしました。", ["待つ"])
+                pipeline_common.constellate_stars(conn)
+                feed = pipeline_common.relay_feed(conn)
+        born = [e for e in feed if e["kind"] == "constellation_born"]
+        self.assertTrue(born)
+        self.assertTrue(born[0]["constellation_name"].endswith("の星座"))
+        self.assertIn("Aさん", born[0]["star_who"])
+        self.assertEqual(born[0]["detail"]["star_count"], 2)
+
+    def test_constellate_records_grew_event(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                self._insert(conn, "s1", "Aさん", "待つことが苦手でした。", ["待つ"])
+                self._insert(conn, "s2", "Bさん", "待つ時間にそわそわしました。", ["待つ"])
+                pipeline_common.constellate_stars(conn)
+                self._insert(conn, "s3", "Cさん", "待つ練習を始めました。", ["待つ"])
+                pipeline_common.constellate_stars(conn)
+                feed = pipeline_common.relay_feed(conn)
+        grew = [e for e in feed if e["kind"] == "constellation_grew"]
+        self.assertTrue(grew)
+        self.assertIn("Cさん", grew[0]["star_who"])
+
+    def test_all_time_connects_old_stars(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                self._insert(conn, "old", "古株さん", "笑いで安心しました。", ["安心"], created_at="2026-01-05T00:00:00+00:00")
+                self._insert(conn, "new", "新人さん", "今日も安心が戻りました。", ["安心"])
+                created = pipeline_common.constellate_stars(conn, all_time=True)
+                star_ids = {
+                    row["star_id"]
+                    for row in conn.execute("SELECT star_id FROM constellation_stars")
+                }
+        self.assertTrue(created)
+        self.assertIn("old", star_ids)
+        self.assertIn("new", star_ids)
+
+    def test_relay_feed_orders_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO relay_events (id, space_id, kind, constellation_id, constellation_name, star_id, star_who, detail_json, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    ("e1", pipeline_common.default_space_id(), "constellation_born", "c1", "古い星座", None, "X", "{}", "2026-01-01T00:00:00+00:00"),
+                )
+                conn.execute(
+                    "INSERT INTO relay_events (id, space_id, kind, constellation_id, constellation_name, star_id, star_who, detail_json, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    ("e2", pipeline_common.default_space_id(), "constellation_born", "c2", "新しい星座", None, "Y", "{}", "2026-02-01T00:00:00+00:00"),
+                )
+                feed = pipeline_common.relay_feed(conn)
+        self.assertEqual(feed[0]["constellation_name"], "新しい星座")
+
+    def test_relay_events_isolated_by_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.create_space(conn, "other-space", "別の宇宙", {})
+                pipeline_common.record_relay_event(conn, pipeline_common.default_space_id(), "constellation_born", "c1", "自分の星座", [], 2)
+                pipeline_common.record_relay_event(conn, "other-space", "constellation_born", "c2", "他人の星座", [], 2)
+                mine = pipeline_common.relay_feed(conn, space_id=pipeline_common.default_space_id())
+                theirs = pipeline_common.relay_feed(conn, space_id="other-space")
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]["constellation_name"], "自分の星座")
+        self.assertEqual(len(theirs), 1)
+        self.assertEqual(theirs[0]["constellation_name"], "他人の星座")
+
+
 if __name__ == "__main__":
     unittest.main()

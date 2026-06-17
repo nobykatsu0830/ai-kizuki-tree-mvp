@@ -422,6 +422,19 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_reflux_star_kind ON reflux_notifications(star_id, kind);
 
+            CREATE TABLE IF NOT EXISTS relay_events (
+                id TEXT PRIMARY KEY,
+                space_id TEXT NOT NULL DEFAULT 'noby-universe',
+                kind TEXT NOT NULL,
+                constellation_id TEXT,
+                constellation_name TEXT,
+                star_id TEXT,
+                star_who TEXT,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_relay_events_space_created ON relay_events(space_id, created_at);
+
             CREATE TABLE IF NOT EXISTS themes (
                 name TEXT PRIMARY KEY,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -915,21 +928,111 @@ def embed_stars(conn: sqlite3.Connection, week: str | None = None, space_id: str
     return {"updated": updated, "space_id": space_id or default_space_id(), "week_of": week_start(week) if week else None}
 
 
-def constellate_stars(conn: sqlite3.Connection, week: str | None = None, space_id: str | None = None) -> list[dict]:
+def _star_who(star) -> str:
+    if isinstance(star, dict):
+        return (star.get("display_name") or "匿名")
+    try:
+        return star["display_name"] or "匿名"
+    except Exception:
+        return "匿名"
+
+
+def _star_id(star) -> str | None:
+    if isinstance(star, dict):
+        return star.get("id")
+    try:
+        return star["id"]
+    except Exception:
+        return None
+
+
+def record_relay_event(conn, space_id: str, kind: str, constellation_id: str, constellation_name: str, added_stars: list, total_count: int) -> str:
+    """光のリレーの出来事を1件記録する（星座の誕生・成長など、アウトプットが生かされた動き）。"""
+    whos = list(dict.fromkeys(_star_who(s) for s in added_stars))
+    detail = {"star_count": total_count, "added_count": len(added_stars), "added_whos": whos}
+    eid = uuid.uuid4().hex[:12]
+    conn.execute(
+        """
+        INSERT INTO relay_events
+        (id, space_id, kind, constellation_id, constellation_name, star_id, star_who, detail_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            eid,
+            space_id,
+            kind,
+            constellation_id,
+            constellation_name,
+            (_star_id(added_stars[0]) if added_stars else None),
+            "・".join(whos),
+            json.dumps(detail, ensure_ascii=False),
+            now_iso(),
+        ),
+    )
+    return eid
+
+
+def relay_feed(conn, space_id: str | None = None, limit: int = 8) -> list[dict]:
+    """公開ページ用：最近の「宇宙の動き」を新しい順で返す。"""
+    sid = space_id or default_space_id()
+    rows = conn.execute(
+        "SELECT * FROM relay_events WHERE space_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+        (sid, limit),
+    ).fetchall()
+    feed = []
+    for r in rows:
+        try:
+            detail = json.loads(r["detail_json"]) if r["detail_json"] else {}
+        except Exception:
+            detail = {}
+        feed.append(
+            {
+                "id": r["id"],
+                "kind": r["kind"],
+                "constellation_id": r["constellation_id"],
+                "constellation_name": r["constellation_name"],
+                "star_who": r["star_who"],
+                "detail": detail,
+                "created_at": r["created_at"],
+            }
+        )
+    return feed
+
+
+def constellate_stars(conn: sqlite3.Connection, week: str | None = None, space_id: str | None = None, all_time: bool = False) -> list[dict]:
     week_of = week_start(week)
-    embed_stars(conn, week=week_of, space_id=space_id)
-    stars = approved_star_rows(conn, week_of=week_of, space_id=space_id)
+    sid = space_id or default_space_id()
+    embed_week = None if all_time else week_of
+    embed_stars(conn, week=embed_week, space_id=space_id)
+    stars = approved_star_rows(conn, week_of=embed_week, space_id=space_id)
     groups = _group_stars(stars)
     created = []
     assigned: set[str] = set()
     for tag, kind, group_stars in groups:
         name = constellation_name(tag, kind)
+        prior = conn.execute(
+            "SELECT id FROM constellations WHERE space_id=? AND name=? AND week_of=?",
+            (sid, name, week_of),
+        ).fetchone()
+        prior_star_ids: set[str] = set()
+        if prior:
+            prior_star_ids = {
+                row["star_id"]
+                for row in conn.execute(
+                    "SELECT star_id FROM constellation_stars WHERE constellation_id=?", (prior["id"],)
+                )
+            }
         cid = upsert_constellation(conn, name, constellation_summary(tag, kind, group_stars), generated_question(tag, kind), week_of, space_id)
         for star in group_stars:
             conn.execute("INSERT OR IGNORE INTO constellation_stars (constellation_id, star_id) VALUES (?, ?)", (cid, star["id"]))
             if star["id"] not in assigned:
                 conn.execute("UPDATE reflections SET constellation_id=? WHERE id=?", (cid, star["id"]))
                 assigned.add(star["id"])
+        added_stars = [s for s in group_stars if s["id"] not in prior_star_ids]
+        if not prior:
+            record_relay_event(conn, sid, "constellation_born", cid, name, group_stars, len(group_stars))
+        elif added_stars:
+            record_relay_event(conn, sid, "constellation_grew", cid, name, added_stars, len(group_stars))
         created.append({"id": cid, "name": name, "week_of": week_of, "star_count": len(group_stars)})
     return created
 

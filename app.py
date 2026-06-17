@@ -609,6 +609,17 @@ a{color:var(--teal)}
 .const-bullets li{font-size:.88em;line-height:1.6;padding:8px 10px;background:rgba(255,255,255,.04);border-left:2px solid var(--gold);border-radius:0 6px 6px 0}
 .const-who{display:inline-block;font-size:.8em;color:var(--gold);margin-right:6px;font-weight:600}
 .const-week{font-size:12px;color:var(--dim);letter-spacing:.14em}
+.relay{margin:28px 0 8px;padding:28px 28px 22px;border:1px solid rgba(238,201,111,.28);border-radius:22px;background:linear-gradient(168deg,rgba(238,201,111,.08),rgba(159,217,201,.035));box-shadow:0 18px 50px rgba(0,0,0,.34),inset 0 0 80px rgba(238,201,111,.05)}
+.relay h2{margin:0 0 4px}
+.relay-note{margin:0 0 20px;color:var(--dim);font-size:13.5px;letter-spacing:.05em;line-height:1.85}
+.relay-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.relay-item{display:flex;gap:14px;align-items:flex-start;padding:14px 4px;border-bottom:1px solid rgba(255,255,255,.06)}
+.relay-item:last-child{border-bottom:0}
+.relay-mark{color:var(--gold-soft);font-size:18px;line-height:1.55;text-shadow:0 0 14px rgba(255,233,176,.75);flex:none;animation:pulse 3.4s ease-in-out infinite}
+.relay-body{flex:1;min-width:0}
+.relay-line{margin:0;font-family:var(--serif);font-size:16.5px;color:#f6f3e7;letter-spacing:.04em;line-height:1.7}
+.relay-sub{margin:5px 0 0;font-size:13.5px;color:var(--dim);line-height:1.9}
+.star-relay{margin:10px 0 2px;font-size:12.5px;color:var(--gold);letter-spacing:.05em;opacity:.92;line-height:1.6}
 .empty{text-align:center;padding:64px 20px}
 .empty .star-dot{margin:0 auto 20px;width:14px;height:14px}
 .empty p{font-family:var(--serif);color:var(--dim);letter-spacing:.1em;line-height:2.3;margin:0}
@@ -689,6 +700,8 @@ def public_page() -> bytes:
     with db() as conn:
         consts = list(conn.execute("SELECT * FROM constellations WHERE space_id=? ORDER BY created_at DESC", (pipeline_common.current_space_id(),)))
         hidden = pipeline_common.hidden_theme_names(conn)
+        relay = pipeline_common.relay_feed(conn, limit=6)
+    const_by_id = {c["id"]: c["name"] for c in consts}
 
     cards = []
     for r in roots:
@@ -698,11 +711,16 @@ def public_page() -> bytes:
             for c in by_parent.get(r["id"], [])
         )
         voices_block = f'<div class="voices">{voices}</div>' if voices else ""
+        const_id = row_get(r, "constellation_id")
+        relay_badge = ""
+        if const_id and const_id in const_by_id:
+            relay_badge = f'<div class="star-relay">☄ この{esc(star)}は「{esc(const_by_id[const_id])}」につながっています</div>'
         cards.append(
             f'''<article class="card star-card">
           <header><span class="star-dot"></span><span class="star-who">{esc(r["display_name"])}</span><span class="star-kind">{esc(r["source"])}</span></header>
           <p class="star-body">{esc(r["body"])}</p>
           <div class="tags">{tags}</div>
+          {relay_badge}
           {voices_block}
           <a class="btn ghost small" href="{base}/submit?parent_id={esc(r["id"])}">この{esc(star)}に声を寄せる</a>
         </article>'''
@@ -722,6 +740,37 @@ def public_page() -> bytes:
                 f'<p class="q">{esc(latest_q)}</p>'
                 f'<a class="btn ghost small" href="{base}/submit">この問いに{esc(star)}で応える</a></section>'
             )
+
+    relay_section = ""
+    if relay:
+        items = []
+        for ev in relay:
+            cname = ev["constellation_name"] or constellation
+            who = ev.get("star_who") or ""
+            who_clip = who if len(who) <= 36 else who[:36] + "…"
+            detail = ev.get("detail") or {}
+            n = detail.get("star_count") or detail.get("added_count") or 0
+            if ev["kind"] == "constellation_born":
+                mark = "✦"
+                line = f'「{esc(cname)}」が生まれました'
+                sub = f'{esc(who_clip)} の{n}つの{esc(star)}が響き合って、新しい{esc(constellation)}になりました。'
+            elif ev["kind"] == "constellation_grew":
+                mark = "✧"
+                line = f'「{esc(cname)}」がひろがっています'
+                sub = f'{esc(who_clip)} の{esc(star)}が、この{esc(constellation)}に新しくつながりました。'
+            else:
+                mark = "·"
+                line = esc(cname)
+                sub = esc(who_clip)
+            items.append(
+                f'<li class="relay-item"><span class="relay-mark">{mark}</span>'
+                f'<div class="relay-body"><p class="relay-line">{line}</p><p class="relay-sub">{sub}</p></div></li>'
+            )
+        relay_section = (
+            f'<section class="relay"><h2>宇宙の動き</h2>'
+            f'<p class="relay-note">あなたのアウトプットが、AIによって{esc(constellation)}に編まれ、生かされていく動きです。</p>'
+            f'<ul class="relay-list">{"".join(items)}</ul></section>'
+        )
 
     def render_summary(summary_md: str) -> str:
         lines = summary_md.strip().splitlines()
@@ -771,6 +820,7 @@ def public_page() -> bytes:
       </div>
     </header>
     {question_section}
+    {relay_section}
     {const_section}
     <h2>みんなの{esc(star)}</h2>
     {stars_section}
