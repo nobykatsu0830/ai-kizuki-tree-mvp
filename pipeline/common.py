@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -267,6 +268,26 @@ def create_space(conn, space_id: str, name: str, worldview: dict | None = None) 
     conn.execute("UPDATE spaces SET name=?, worldview_json=? WHERE id=?", ((name or space_id).strip(), wv_json, space_id))
 
 
+def hash_admin_token(token: str) -> str:
+    """管理者パスワードをSHA-256でハッシュ化（DBには平文を保存しない）。"""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def set_space_admin_token(conn, space_id: str, token: str) -> None:
+    """スペース別の管理者パスワードを設定（手動オンボード用）。空文字で解除。"""
+    value = hash_admin_token(token) if token else None
+    conn.execute("UPDATE spaces SET admin_token_hash=? WHERE id=?", (value, space_id))
+
+
+def get_space_admin_hash(conn, space_id: str) -> str | None:
+    """スペースに設定された管理者パスワードのハッシュを返す（未設定なら None）。"""
+    row = conn.execute("SELECT admin_token_hash FROM spaces WHERE id=?", (space_id,)).fetchone()
+    if not row:
+        return None
+    value = row["admin_token_hash"]
+    return value or None
+
+
 def default_space_id() -> str:
     return current_space_id()
 
@@ -450,6 +471,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "reflections", "constellation_id", "TEXT")
         ensure_column(conn, "reflections", "themed_at", "TEXT")  # LLMバッチ分類済みの印（NULL=未処理）
         ensure_column(conn, "spaces", "worldview_json", "TEXT")  # スペース別の世界観（マルチテナント）
+        ensure_column(conn, "spaces", "admin_token_hash", "TEXT")  # スペース別の管理者パスワード（SHA-256ハッシュ）
         conn.execute(
             "INSERT OR IGNORE INTO spaces (id, name, worldview_path, created_at) VALUES (?, ?, ?, ?)",
             (space_id, str(worldview.get("terms", {}).get("universe", "気づきの宇宙")), "worldview.yaml", now_iso()),

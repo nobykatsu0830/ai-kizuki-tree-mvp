@@ -1409,7 +1409,10 @@ def weekly_page() -> bytes:
 
 def source_recording_rows() -> list[sqlite3.Row]:
     with db() as conn:
-        return list(conn.execute("SELECT * FROM source_recordings ORDER BY created_at DESC"))
+        return list(conn.execute(
+            "SELECT * FROM source_recordings WHERE space_id=? ORDER BY created_at DESC",
+            (pipeline_common.current_space_id(),),
+        ))
 
 
 def derived_content_rows(recording_id: str) -> list[sqlite3.Row]:
@@ -1508,7 +1511,10 @@ def followup_suggestions_page() -> bytes:
 
 def constellation_rows() -> list[sqlite3.Row]:
     with db() as conn:
-        return list(conn.execute("SELECT * FROM constellations ORDER BY week_of DESC, created_at DESC"))
+        return list(conn.execute(
+            "SELECT * FROM constellations WHERE space_id=? ORDER BY week_of DESC, created_at DESC",
+            (pipeline_common.current_space_id(),),
+        ))
 
 
 def followup_rows() -> list[sqlite3.Row]:
@@ -1801,22 +1807,38 @@ def space_base() -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def admin_authorized(self) -> bool:
-        """ADMIN_TOKEN が設定されていれば Basic 認証のパスワードと一致を要求する。
-        未設定の場合は本番(プロキシ経由)では一切通さず、ローカル開発(127.0.0.1)のみ許可する。"""
-        token = os.environ.get("ADMIN_TOKEN", "")
-        if not token:
-            client = self.client_address[0] if self.client_address else ""
-            return client in ("127.0.0.1", "::1")
+    def _basic_password(self) -> str | None:
+        """Authorization: Basic ヘッダからパスワード部分を取り出す（無ければ None）。"""
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Basic "):
-            return False
+            return None
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
         except Exception:
-            return False
-        _, _, password = decoded.partition(":")
-        return hmac.compare_digest(password, token)
+            return None
+        return decoded.partition(":")[2]
+
+    def admin_authorized(self) -> bool:
+        """スペース別の管理者パスワードで認証する（顧客同士が互いの管理画面に入れない）。
+        - スペースに admin_token_hash があれば、その Basic 認証パスワードのSHA-256一致を要求。
+        - デフォルト宇宙に限り、未設定なら環境変数 ADMIN_TOKEN を後方互換で使用。
+        - どちらも無ければ本番(プロキシ経由)では一切通さず、ローカル開発(127.0.0.1)のみ許可。"""
+        space_id = pipeline_common.current_space_id()
+        with db() as conn:
+            space_hash = pipeline_common.get_space_admin_hash(conn, space_id)
+        if space_hash:
+            password = self._basic_password()
+            if password is None:
+                return False
+            return hmac.compare_digest(pipeline_common.hash_admin_token(password), space_hash)
+        env_token = os.environ.get("ADMIN_TOKEN", "")
+        if space_id == pipeline_common.DEFAULT_SPACE_ID and env_token:
+            password = self._basic_password()
+            if password is None:
+                return False
+            return hmac.compare_digest(password, env_token)
+        client = self.client_address[0] if self.client_address else ""
+        return client in ("127.0.0.1", "::1")
 
     def require_admin(self) -> bool:
         if self.admin_authorized():

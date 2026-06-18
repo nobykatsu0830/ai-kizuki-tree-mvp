@@ -772,5 +772,75 @@ class RelayEventsTest(unittest.TestCase):
         self.assertEqual(theirs[0]["constellation_name"], "他人の星座")
 
 
+class MultiTenantAdminTest(unittest.TestCase):
+    def _rec(self, conn, rid, space_id):
+        conn.execute(
+            "INSERT INTO source_recordings (id, space_id, title, audio_path, recorded_at, kind, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (rid, space_id, f"rec {rid}", f"/x/{rid}.m4a", pipeline_common.now_iso(), "live", "raw", pipeline_common.now_iso()),
+        )
+
+    def test_space_admin_token_hashed_and_isolated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.create_space(conn, "space-a", "A")
+                pipeline_common.create_space(conn, "space-b", "B")
+                pipeline_common.set_space_admin_token(conn, "space-a", "alpha-pass")
+                pipeline_common.set_space_admin_token(conn, "space-b", "beta-pass")
+                ha = pipeline_common.get_space_admin_hash(conn, "space-a")
+                hb = pipeline_common.get_space_admin_hash(conn, "space-b")
+        # 正しいパスのハッシュと一致、他スペースのパスでは不一致、平文は保存されない
+        self.assertEqual(ha, pipeline_common.hash_admin_token("alpha-pass"))
+        self.assertNotEqual(ha, pipeline_common.hash_admin_token("beta-pass"))
+        self.assertNotEqual(ha, hb)
+        self.assertNotIn("alpha-pass", ha)
+
+    def test_space_admin_unset_and_clear_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.create_space(conn, "space-x", "X")
+                unset = pipeline_common.get_space_admin_hash(conn, "space-x")
+                pipeline_common.set_space_admin_token(conn, "space-x", "p")
+                pipeline_common.set_space_admin_token(conn, "space-x", "")  # 解除
+                cleared = pipeline_common.get_space_admin_hash(conn, "space-x")
+        self.assertIsNone(unset)
+        self.assertIsNone(cleared)
+
+    def test_admin_recording_rows_scoped_to_current_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            app.DB_PATH = db_path
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.create_space(conn, "space-a", "A")
+                pipeline_common.create_space(conn, "space-b", "B")
+                self._rec(conn, "ra1", "space-a")
+                self._rec(conn, "ra2", "space-a")
+                self._rec(conn, "rb1", "space-b")
+            pipeline_common.set_current_space("space-a", pipeline_common.DEFAULT_WORLDVIEW)
+            rows = app.source_recording_rows()
+            pipeline_common.clear_current_space()
+        ids = {r["id"] for r in rows}
+        self.assertEqual(ids, {"ra1", "ra2"})  # 他スペースのrb1は混ざらない
+
+    def test_admin_constellation_rows_scoped_to_current_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "k.sqlite3"
+            pipeline_common.init_db(db_path)
+            app.DB_PATH = db_path
+            with pipeline_common.connect(db_path) as conn:
+                pipeline_common.create_space(conn, "space-a", "A")
+                pipeline_common.create_space(conn, "space-b", "B")
+                pipeline_common.upsert_constellation(conn, "Aの星座", "s", "q", "2026-06-15", space_id="space-a")
+                pipeline_common.upsert_constellation(conn, "Bの星座", "s", "q", "2026-06-15", space_id="space-b")
+            pipeline_common.set_current_space("space-a", pipeline_common.DEFAULT_WORLDVIEW)
+            names = {c["name"] for c in app.constellation_rows()}
+            pipeline_common.clear_current_space()
+        self.assertEqual(names, {"Aの星座"})  # 他スペースのBの星座は混ざらない
+
+
 if __name__ == "__main__":
     unittest.main()
