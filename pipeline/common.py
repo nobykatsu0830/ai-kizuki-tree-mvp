@@ -462,6 +462,28 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 merged_into TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS star_links (
+                id TEXT PRIMARY KEY,
+                space_id TEXT NOT NULL DEFAULT 'noby-universe',
+                star_a TEXT NOT NULL,
+                star_b TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_star_links_pair ON star_links(space_id, star_a, star_b);
+
+            CREATE TABLE IF NOT EXISTS emergent_questions (
+                id TEXT PRIMARY KEY,
+                space_id TEXT NOT NULL DEFAULT 'noby-universe',
+                question TEXT NOT NULL,
+                context_md TEXT NOT NULL DEFAULT '',
+                source_star_ids_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_emergent_questions_space
+                ON emergent_questions(space_id, status, created_at);
             """
         )
         ensure_column(conn, "reflections", "space_id", f"TEXT NOT NULL DEFAULT '{space_id}'")
@@ -470,6 +492,8 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "reflections", "embedding_json", "TEXT")
         ensure_column(conn, "reflections", "constellation_id", "TEXT")
         ensure_column(conn, "reflections", "themed_at", "TEXT")  # LLMバッチ分類済みの印（NULL=未処理）
+        ensure_column(conn, "reflections", "woven_at", "TEXT")  # 光の糸の編み込み済みの印（NULL=未処理）
+        ensure_column(conn, "reflections", "question_id", "TEXT")  # この星が応えた「星々から生まれた問い」
         ensure_column(conn, "spaces", "worldview_json", "TEXT")  # スペース別の世界観（マルチテナント）
         ensure_column(conn, "spaces", "admin_token_hash", "TEXT")  # スペース別の管理者パスワード（SHA-256ハッシュ）
         conn.execute(
@@ -1183,6 +1207,157 @@ def suggestions_to_markdown(suggestions: list[dict]) -> str:
             ]
         )
     return "\n".join(lines).strip() + "\n"
+
+
+# --- 光の糸（星同士の意味リンク）と、星々から生まれた問い ---
+
+VISIBLE_STAR_WHERE = "status='approved' AND visibility='universe'"
+
+
+def _norm_pair(star_a: str, star_b: str) -> tuple[str, str]:
+    a, b = sorted(((star_a or "").strip(), (star_b or "").strip()))
+    return a, b
+
+
+def upsert_star_link(conn, star_a: str, star_b: str, reason: str, space_id: str | None = None) -> bool:
+    """星と星のあいだに光の糸を張る。既に張られていれば何もしない。新規に張れたら True。"""
+    a, b = _norm_pair(star_a, star_b)
+    if not a or not b or a == b:
+        return False
+    sid = space_id or default_space_id()
+    existing = conn.execute(
+        "SELECT id FROM star_links WHERE space_id=? AND star_a=? AND star_b=?", (sid, a, b)
+    ).fetchone()
+    if existing:
+        return False
+    conn.execute(
+        "INSERT INTO star_links (id, space_id, star_a, star_b, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (uuid.uuid4().hex[:12], sid, a, b, clip_text(reason or "", 120), now_iso()),
+    )
+    return True
+
+
+def star_links_for(conn, star_id: str, space_id: str | None = None) -> list[dict]:
+    """指定の星と響き合う星を、理由つきで返す。相手は表示時点で公開中の星に限る。"""
+    sid = space_id or default_space_id()
+    out: list[dict] = []
+    rows = conn.execute(
+        "SELECT * FROM star_links WHERE space_id=? AND (star_a=? OR star_b=?) ORDER BY created_at ASC",
+        (sid, star_id, star_id),
+    ).fetchall()
+    for link in rows:
+        other_id = link["star_b"] if link["star_a"] == star_id else link["star_a"]
+        other = conn.execute(
+            f"SELECT id, display_name, body, tags FROM reflections WHERE id=? AND space_id=? AND {VISIBLE_STAR_WHERE}",
+            (other_id, sid),
+        ).fetchone()
+        if not other:
+            continue
+        out.append(
+            {
+                "id": other["id"],
+                "display_name": other["display_name"],
+                "body": other["body"],
+                "tags": parse_json_list(other["tags"]),
+                "reason": link["reason"] or "",
+            }
+        )
+    return out
+
+
+def links_payload(conn, space_id: str | None = None) -> list[dict]:
+    """宇宙ページ用：公開中の星同士の糸を {a, b, reason} で返す。"""
+    sid = space_id or default_space_id()
+    visible = {
+        r["id"]
+        for r in conn.execute(
+            f"SELECT id FROM reflections WHERE space_id=? AND {VISIBLE_STAR_WHERE}", (sid,)
+        )
+    }
+    out = []
+    for link in conn.execute(
+        "SELECT star_a, star_b, reason FROM star_links WHERE space_id=? ORDER BY created_at ASC", (sid,)
+    ):
+        if link["star_a"] in visible and link["star_b"] in visible:
+            out.append({"a": link["star_a"], "b": link["star_b"], "reason": link["reason"] or ""})
+    return out
+
+
+def create_emergent_question(
+    conn, question: str, context_md: str, source_star_ids: list[str], space_id: str | None = None
+) -> str:
+    qid = uuid.uuid4().hex[:12]
+    conn.execute(
+        """
+        INSERT INTO emergent_questions (id, space_id, question, context_md, source_star_ids_json, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
+        """,
+        (
+            qid,
+            space_id or default_space_id(),
+            clip_text((question or "").strip(), 200),
+            (context_md or "").strip(),
+            json.dumps(list(source_star_ids or []), ensure_ascii=False),
+            now_iso(),
+        ),
+    )
+    return qid
+
+
+def get_question(conn, question_id: str, space_id: str | None = None):
+    sid = space_id or default_space_id()
+    return conn.execute(
+        "SELECT * FROM emergent_questions WHERE id=? AND space_id=?", ((question_id or "").strip(), sid)
+    ).fetchone()
+
+
+def question_source_stars(conn, question_row, space_id: str | None = None) -> list[dict]:
+    """問いの素材になった星を、表示時点で公開中のものだけ解決して返す（還流の可視化）。"""
+    sid = space_id or default_space_id()
+    stars = []
+    for star_id in parse_json_list(question_row["source_star_ids_json"], default=()):
+        row = conn.execute(
+            f"SELECT id, display_name, body FROM reflections WHERE id=? AND space_id=? AND {VISIBLE_STAR_WHERE}",
+            (star_id, sid),
+        ).fetchone()
+        if row:
+            stars.append({"id": row["id"], "display_name": row["display_name"], "body": row["body"]})
+    return stars
+
+
+def active_questions(conn, space_id: str | None = None, limit: int = 5) -> list[dict]:
+    """星々から生まれた問い（active）を新しい順に、素材星つきで返す。"""
+    sid = space_id or default_space_id()
+    rows = conn.execute(
+        "SELECT * FROM emergent_questions WHERE space_id=? AND status='active' ORDER BY created_at DESC, id DESC LIMIT ?",
+        (sid, limit),
+    ).fetchall()
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "id": row["id"],
+                "question": row["question"],
+                "context_md": row["context_md"] or "",
+                "created_at": row["created_at"],
+                "source_stars": question_source_stars(conn, row, space_id=sid),
+            }
+        )
+    return out
+
+
+def record_relay(conn, space_id: str, kind: str, detail: dict, star_id: str | None = None, star_who: str | None = None, constellation_name: str | None = None) -> str:
+    """光のリレーの汎用イベント（link_woven / question_born / question_answered など）。"""
+    eid = uuid.uuid4().hex[:12]
+    conn.execute(
+        """
+        INSERT INTO relay_events
+        (id, space_id, kind, constellation_id, constellation_name, star_id, star_who, detail_json, created_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+        """,
+        (eid, space_id, kind, constellation_name, star_id, star_who, json.dumps(detail or {}, ensure_ascii=False), now_iso()),
+    )
+    return eid
 
 
 def create_followup(
