@@ -85,7 +85,7 @@ class WeaveTest(unittest.TestCase):
             self.assertEqual(json.loads(rows[0]["tags"]), ["笑い"])
             self.assertEqual(json.loads(rows[1]["tags"]), ["笑い", "安心"])
 
-    def test_no_tag_overlap_creates_no_link_but_marks_woven(self):
+    def test_no_tag_overlap_creates_no_link_and_leaves_unwoven_for_codex_retry(self):
         with pc.connect(self.db_path) as conn:
             a = self._insert_star(conn, "n1", "Aさん", "身体のこわばりに気づいた。", ["身体感覚"], created_at="2026-07-04T00:00:01+00:00")
             b = self._insert_star(conn, "n2", "Bさん", "問いが残った。", ["問い"], created_at="2026-07-04T00:00:02+00:00")
@@ -97,11 +97,13 @@ class WeaveTest(unittest.TestCase):
                 conn.execute("SELECT COUNT(*) AS count FROM star_links WHERE space_id=?", (pc.default_space_id(),)).fetchone()["count"],
                 0,
             )
+            # フォールバック夜に相棒が見つからなかった星は未編みのまま残る
+            # （後日codexが再挑戦できる — 無条件刻印は糸の成長上限になる）
             rows = conn.execute(
                 "SELECT woven_at FROM reflections WHERE id IN (?, ?)",
                 (a, b),
             ).fetchall()
-            self.assertTrue(all(row["woven_at"] for row in rows))
+            self.assertTrue(all(row["woven_at"] is None for row in rows))
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) AS count FROM relay_events WHERE space_id=?", (pc.default_space_id(),)).fetchone()["count"],
                 0,

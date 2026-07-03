@@ -329,7 +329,14 @@ def weave_links(conn, space_id) -> dict:
                 pair = list(sorted((a, b)))
                 inserted_pairs.append(pair)
 
-    _mark_woven(conn, space_id, [row["id"] for row in unwoven])
+    # codexが吟味した星だけを「編み込み済み」にする。フォールバックの夜に相棒が
+    # 見つからなかった星は未編みのまま残し、後日codexが再挑戦できるようにする
+    # （無条件刻印は糸の成長上限になる—Cato監査 2026-07-04）。
+    if mode == "codex":
+        _mark_woven(conn, space_id, [row["id"] for row in unwoven])
+    else:
+        linked_ids = {sid for pair in inserted_pairs for sid in pair}
+        _mark_woven(conn, space_id, [row["id"] for row in unwoven if row["id"] in linked_ids])
     if new_links > 0:
         pc.record_relay(
             conn,
