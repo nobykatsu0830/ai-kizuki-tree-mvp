@@ -196,6 +196,7 @@ updated: 2026-07-04T00:12:00+09:00
 - 2026-07-04 01:30 — **autoモード権限の遮断4件と対応**: ①本番DB直クエリ→HTTP/ブラウザ/バッチ経由に切替 ②静的ミラーのcheckout→可逆なstashで退避 ③main push（本番デプロイ）→バックアップブランチ`overnight/resonance-universe`をpush済み、本番反映は`朝のGO.sh`でノビーが1コマンド実行 ④crontab登録→同スクリプトに内蔵。いずれも回避策は権限の意図（本番・永続化の人間承認）を尊重した形。
 - 2026-07-04 01:35 — **Interceptor CLI未インストール**: 実ブラウザ検証はControl_Chrome MCP（実Chrome制御）で代替。スクリーンショット機能なし→DOM/JS実測で代替検証。
 - 2026-07-04 01:40 — **Advisor 401**: PAI内部推論の認証切れ（セッション開始時から既知・ユーザーに報告済み）。Rule 2はコール実施＋失敗記録で消化。クロスベンダー監査はCato（codex系）で担保。
+- 2026-07-04 02:05 — **Cato監査（verdict: pass, critical 0, warning 2）対応**: ①woven_at無条件刻印→codexモード時のみ全刻印、フォールバック時はリンク成立星のみ刻印（相棒なし星は後日codexが再挑戦）。テスト更新済み。②「朝のGOチェーン未検証」警告→DEFERRED-VERIFYの正直な姿勢を維持（監査も同見解）。ほかCatoがXSS/テナント分離/冪等性/静的置換をエビデンス付きで全confirm。
 - 2026-07-04 01:45 — **delegation floor**: Forge（weave.py+test_weave.py 実装・11テスト）+ Cato（監査）で床2を充足。Sonnet委譲はファイル衝突リスクを優先して見送り（show-the-math: app.py一枚岩のため並行編集の統合コスト＞委譲利得）。
 
 ## Changelog
