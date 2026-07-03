@@ -277,16 +277,23 @@ def generate_material_derivatives(title: str, course: str, raw_text: str) -> dic
     }
 
 
-def insert_reflection(source: str, display_name: str, body: str, parent_id: str | None = None, external_user_id: str | None = None, status: str = "pending") -> str:
+def insert_reflection(source: str, display_name: str, body: str, parent_id: str | None = None, external_user_id: str | None = None, status: str = "pending", question_id: str | None = None) -> str:
     rid = uuid.uuid4().hex[:12]
     star_kind = pipeline_common.infer_star_kind(body)
+    space_id = pipeline_common.default_space_id()
     with db() as conn:
+        # 問いへの応答: 現在の宇宙に実在するactiveな問いだけを紐づける（クロステナント防止）
+        linked_question = None
+        if question_id:
+            q = pipeline_common.get_question(conn, question_id, space_id=space_id)
+            if q and q["status"] == "active":
+                linked_question = q
         tags = resolve_tags(conn, body)
         conn.execute(
             """
             INSERT INTO reflections
-            (id, parent_id, source, external_user_id, display_name, body, tags, status, created_at, space_id, star_kind, visibility)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, parent_id, source, external_user_id, display_name, body, tags, status, created_at, space_id, star_kind, visibility, question_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rid,
@@ -298,11 +305,22 @@ def insert_reflection(source: str, display_name: str, body: str, parent_id: str 
                 json.dumps(tags, ensure_ascii=False),
                 status,
                 now_iso(),
-                pipeline_common.default_space_id(),
+                space_id,
                 star_kind,
                 "universe",
+                linked_question["id"] if linked_question else None,
             ),
         )
+        if linked_question and status == "approved":
+            # 新たな流れの可視化: 問いに星が応えた出来事を光のリレーへ
+            pipeline_common.record_relay(
+                conn,
+                space_id,
+                "question_answered",
+                {"question": pipeline_common.clip_text(linked_question["question"], 80), "who": display_name},
+                star_id=rid,
+                star_who=display_name,
+            )
     return rid
 
 
@@ -638,6 +656,25 @@ details>summary{cursor:pointer;color:var(--gold-soft)}
 .joincta .cta{margin:0;justify-content:center}
 .cosmos-footer{margin-top:72px;text-align:center;color:var(--dim);font-size:13px;letter-spacing:.08em}
 .cosmos-footer a{color:rgba(255,255,255,.32);text-decoration:none;font-size:12px}
+.theme-nav{margin:34px 0 6px}
+.chip-row{display:flex;flex-wrap:wrap;gap:8px}
+.chip-link{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:3px 15px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--ink);font-size:13px;font-weight:700;text-decoration:none;letter-spacing:.04em;transition:.2s}
+.chip-link:hover{border-color:rgba(238,201,111,.5);color:var(--gold-soft)}
+.chip-link.active{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241a05;border-color:transparent}
+.chip-n{font-size:11px;opacity:.75}
+.star-resonance{margin:8px 0 2px;font-size:12.5px;color:var(--teal);letter-spacing:.05em;line-height:1.6}
+.q-origin{margin:2px 0 10px;font-size:12.5px;color:var(--dim);letter-spacing:.05em}
+.card-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.resonance{margin:30px 0}
+.link-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.link-item{background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.link-item a{display:block;color:var(--ink);text-decoration:none}
+.link-item a:hover .link-who{color:var(--gold-soft)}
+.link-who{display:block;font-family:var(--serif);color:var(--gold);font-size:13.5px;letter-spacing:.06em;margin-bottom:4px}
+.link-body{display:block;font-size:14px;color:#d8d5c9;line-height:1.8}
+.link-reason{margin:8px 0 0;font-size:12.5px;color:var(--teal);letter-spacing:.04em}
+.star-single .star-body{font-family:var(--serif);font-size:17px;line-height:2.1}
+.voices-sec{margin:30px 0}
 :focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
 @media(max-width:640px){.wrap{padding:16px 15px 48px}.card{padding:20px 18px}.stat{min-width:118px;padding:14px 16px}.hero{padding:44px 0 20px}}
@@ -684,7 +721,7 @@ def layout(title: str, body: str, admin: bool = False) -> bytes:
     return page.encode("utf-8")
 
 
-def public_page() -> bytes:
+def public_page(theme: str = "") -> bytes:
     universe = pipeline_common.worldview_term("universe", "気づきの宇宙")
     star = pipeline_common.worldview_term("star", "星")
     constellation = pipeline_common.worldview_term("constellation", "星座")
@@ -701,10 +738,44 @@ def public_page() -> bytes:
         consts = list(conn.execute("SELECT * FROM constellations WHERE space_id=? ORDER BY created_at DESC", (pipeline_common.current_space_id(),)))
         hidden = pipeline_common.hidden_theme_names(conn)
         relay = pipeline_common.relay_feed(conn, limit=6)
+        questions = pipeline_common.active_questions(conn, limit=3)
+        links = pipeline_common.links_payload(conn)
     const_by_id = {c["id"]: c["name"] for c in consts}
+    name_by_id = {r["id"]: r["display_name"] for r in all_rows}
+
+    # 星ごとの響き合い（光の糸）を引けるようにする
+    links_by_star: dict[str, list[dict]] = {}
+    for l in links:
+        links_by_star.setdefault(l["a"], []).append({"id": l["b"], "reason": l["reason"]})
+        links_by_star.setdefault(l["b"], []).append({"id": l["a"], "reason": l["reason"]})
+
+    # テーマの整理: 出現テーマからチップを作る（非表示テーマ除外）
+    theme = (theme or "").strip()
+    theme_counts: dict[str, int] = {}
+    for r in roots:
+        for t in parse_tags(r["tags"]):
+            if t not in hidden and t != "未分類":
+                theme_counts[t] = theme_counts.get(t, 0) + 1
+    if theme and theme not in theme_counts:
+        theme = ""
+    shown_roots = [r for r in roots if not theme or theme in parse_tags(r["tags"])]
+
+    theme_chips = ""
+    if theme_counts:
+        chips = [
+            f'<a class="chip-link{"" if theme else " active"}" href="{base}/">すべて</a>'
+        ]
+        for t, n in sorted(theme_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            active = " active" if theme == t else ""
+            chips.append(f'<a class="chip-link{active}" href="{base}/?theme={esc(t)}">{esc(t)}<span class="chip-n">{n}</span></a>')
+        status = f'「{esc(theme)}」の{esc(star)}を表示中（{len(shown_roots)}件） <a href="{base}/">解除</a>' if theme else ""
+        theme_chips = (
+            f'<section class="theme-nav"><h2>テーマでたどる</h2><div class="chip-row">{"".join(chips)}</div>'
+            f'{f"<p class=small>{status}</p>" if status else ""}</section>'
+        )
 
     cards = []
-    for r in roots:
+    for r in shown_roots:
         tags = "".join(f'<span class="tag">{esc(t)}</span>' for t in parse_tags(r["tags"]) if t not in hidden)
         voices = "".join(
             f'<div class="voice"><span class="voice-who">{esc(c["display_name"])}</span><p>{esc(c["body"])}</p></div>'
@@ -715,14 +786,23 @@ def public_page() -> bytes:
         relay_badge = ""
         if const_id and const_id in const_by_id:
             relay_badge = f'<div class="star-relay">☄ この{esc(star)}は「{esc(const_by_id[const_id])}」につながっています</div>'
+        resonance_line = ""
+        partners = links_by_star.get(r["id"], [])
+        if partners:
+            partner_names = "・".join(dict.fromkeys(f'{name_by_id.get(p["id"], "誰か")}' for p in partners[:2]))
+            resonance_line = (
+                f'<div class="star-resonance">✧ {esc(partner_names)}の{esc(star)}と響き合っています</div>'
+            )
         cards.append(
             f'''<article class="card star-card">
           <header><span class="star-dot"></span><span class="star-who">{esc(r["display_name"])}</span></header>
           <p class="star-body">{esc(r["body"])}</p>
           <div class="tags">{tags}</div>
           {relay_badge}
+          {resonance_line}
           {voices_block}
-          <a class="btn ghost small" href="{base}/submit?parent_id={esc(r["id"])}">この{esc(star)}に声を寄せる</a>
+          <div class="card-actions"><a class="btn ghost small" href="{base}/star/{esc(r["id"])}">この{esc(star)}をひらく</a>
+          <a class="btn ghost small" href="{base}/submit?parent_id={esc(r["id"])}">声を寄せる</a></div>
         </article>'''
         )
 
@@ -731,8 +811,20 @@ def public_page() -> bytes:
         f'<p>夜明け前が、いちばん暗い。<br>最初の{esc(star)}を、あなたが灯してください。</p></div>'
     )
 
+    # 星々から生まれた問い（創発）。まだ無ければ従来の週次の問いにフォールバック
     question_section = ""
-    if consts:
+    if questions:
+        q_cards = []
+        for q in questions:
+            whos = "・".join(dict.fromkeys(s["display_name"] for s in q["source_stars"]))
+            origin = f'<p class="q-origin">{esc(whos)}さんの{esc(star)}から生まれました</p>' if whos else ""
+            q_cards.append(
+                f'<section class="card question-card"><div class="q-label">星々から生まれた問い</div>'
+                f'<p class="q">{esc(q["question"])}</p>{origin}'
+                f'<a class="btn ghost small" href="{base}/submit?question_id={esc(q["id"])}">この問いに、あなたの{esc(star)}を灯す</a></section>'
+            )
+        question_section = "".join(q_cards)
+    elif consts:
         latest_q = (consts[0]["generated_question_md"] or "").strip()
         if latest_q:
             question_section = (
@@ -758,6 +850,21 @@ def public_page() -> bytes:
                 mark = "✧"
                 line = f'「{esc(cname)}」がひろがっています'
                 sub = f'{esc(who_clip)} の{esc(star)}が、この{esc(constellation)}に新しくつながりました。'
+            elif ev["kind"] == "link_woven":
+                link_count = detail.get("link_count") or 0
+                mark = "✧"
+                line = f'{link_count}組の{esc(star)}のあいだに光の糸が張られました'
+                sub = f'宇宙の織り手が、響き合う{esc(star)}同士を結びました。'
+            elif ev["kind"] == "question_born":
+                mark = "✦"
+                q_text = detail.get("question") or ""
+                line = f'{esc(star)}々から問いが生まれました'
+                sub = f'「{esc(clip_text(q_text, 60))}」（{esc(who_clip)}の{esc(star)}から）'
+            elif ev["kind"] == "question_answered":
+                mark = "✧"
+                q_text = detail.get("question") or ""
+                line = f'{esc(who_clip)}の{esc(star)}が、問いに応えました'
+                sub = f'「{esc(clip_text(q_text, 60))}」に新しい光が灯りました。'
             else:
                 mark = "·"
                 line = esc(cname)
@@ -822,6 +929,7 @@ def public_page() -> bytes:
     {question_section}
     {relay_section}
     {const_section}
+    {theme_chips}
     <h2>みんなの{esc(star)}</h2>
     {stars_section}
     <section class="card joincta">
@@ -898,6 +1006,15 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 .detail .body{font-family:var(--serif);margin:0;color:#efece0;line-height:2;font-size:15px;max-height:34vh;overflow:auto}
 .detail .voice-link{display:inline-flex;align-items:center;justify-content:center;margin-top:16px;padding:9px 20px;border-radius:999px;border:1px solid rgba(238,201,111,.5);background:rgba(255,255,255,.04);color:var(--gold-soft);font-size:13px;font-weight:700;letter-spacing:.06em;text-decoration:none;transition:.25s}
 .detail .voice-link:hover{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241a05;border-color:transparent}
+.rel{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.rel-h{display:block;font-family:var(--serif);font-weight:600;color:#b9e3d6;font-size:12px;letter-spacing:.16em;margin-bottom:8px}
+.rel-item{display:block;width:100%;text-align:left;appearance:none;background:rgba(159,217,201,.07);border:1px solid rgba(159,217,201,.22);border-radius:12px;padding:9px 12px;margin-bottom:7px;cursor:pointer;font-family:var(--sans);transition:.2s}
+.rel-item:hover{border-color:rgba(159,217,201,.55);background:rgba(159,217,201,.13)}
+.rel-who{display:block;color:#cdeee2;font-size:12.5px;font-weight:700;letter-spacing:.05em}
+.rel-reason{display:block;color:var(--dim);font-size:11.5px;margin-top:3px;line-height:1.6}
+.detail-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.btn-mini{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid rgba(238,201,111,.5);background:rgba(255,255,255,.04);color:var(--gold-soft);font-size:12.5px;font-weight:700;letter-spacing:.05em;text-decoration:none;transition:.25s}
+.btn-mini:hover{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241a05;border-color:transparent}
 .cmd{display:flex;gap:8px;align-items:center;margin-top:14px;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:12px;color:var(--gold-soft);word-break:break-all}
 .cmd button{flex:none;appearance:none;border:1px solid rgba(238,201,111,.5);background:none;color:var(--gold-soft);border-radius:999px;padding:4px 12px;font-size:11.5px;font-weight:700;cursor:pointer}
 .cmd button:hover{background:rgba(238,201,111,.15)}
@@ -929,6 +1046,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var
 <aside class="detail glass" id="detail" aria-live="polite"></aside>
 <script>
 const nodes=__DATA__;
+const starLinks=__LINKS__;
 const STAR_TERM="__STAR__";
 const BASE="__BASE__";
 const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
@@ -977,6 +1095,22 @@ const nodeMap=new Map(nodes.map(n=>[n.id,n]));
 function nodeBy(id){return nodeMap.get(id)}
 function setActiveLabel(id){labelEls.forEach((el,k)=>el.classList.toggle('active',k===id))}
 const constellationGroups=[...nodes.reduce((m,n)=>{if(n.constellation_id){if(!m.has(n.constellation_id))m.set(n.constellation_id,[]);m.get(n.constellation_id).push(n)}return m},new Map()).values()];
+// 光の糸: 意味で響き合う星同士のリンク（存在する星だけ残す）
+const threads=starLinks.filter(l=>nodeMap.has(l.a)&&nodeMap.has(l.b));
+const threadsByStar=new Map();
+threads.forEach(l=>{
+ if(!threadsByStar.has(l.a))threadsByStar.set(l.a,[]);
+ if(!threadsByStar.has(l.b))threadsByStar.set(l.b,[]);
+ threadsByStar.get(l.a).push({id:l.b,reason:l.reason||''});
+ threadsByStar.get(l.b).push({id:l.a,reason:l.reason||''});
+});
+function drawThread(a,b,active){const pa=a&&a._s,pb=b&&b._s;if(!pa||!pb)return;
+ ctx.save();ctx.setLineDash(active?[]:[3,5]);
+ const g=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
+ if(active){g.addColorStop(0,'rgba(159,217,201,.95)');g.addColorStop(1,'rgba(191,174,242,.8)');ctx.shadowBlur=9;ctx.shadowColor='rgba(159,217,201,.75)'}
+ else{g.addColorStop(0,'rgba(159,217,201,.28)');g.addColorStop(1,'rgba(191,174,242,.18)')}
+ ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.strokeStyle=g;ctx.lineWidth=active?1.6:.9;ctx.stroke();
+ ctx.restore();ctx.shadowBlur=0}
 function drawCore(){const cx=W/2,cy=H/2+14,rr=R*zoom;
  let g=ctx.createRadialGradient(cx,cy,rr*.02,cx,cy,rr*1.06);
  g.addColorStop(0,'rgba(160,200,255,.14)');g.addColorStop(.55,'rgba(60,90,180,.07)');g.addColorStop(1,'rgba(0,0,0,0)');
@@ -1003,6 +1137,9 @@ function render(){ctx.clearRect(0,0,W,H);
  drawCore();
  // 1フレームにつき1回だけ球面→投影を計算し、ノードにキャッシュする
  for(let i=0;i<nodes.length;i++){const n=nodes[i];n._p=sphere(n);n._s=project(n._p);}
+ // 光の糸（意味で響き合う星同士）
+ threads.forEach(l=>{const a=nodeMap.get(l.a),b=nodeMap.get(l.b);
+  if(a&&b&&visible(a)&&visible(b))drawThread(a,b,!!(selected&&(selected.id===l.a||selected.id===l.b)))});
  // 星座の線（キャッシュ済み座標を参照）
  constellationGroups.forEach(group=>{for(let i=1;i<group.length;i++){const a=group[i-1],b=group[i];
   if(visible(a)&&visible(b))drawLineP(a,b,selected&&selected.constellation_id===a.constellation_id)}});
@@ -1034,15 +1171,26 @@ function render(){ctx.clearRect(0,0,W,H);
   drawStar(s.x,s.y,Math.max(2.2,4.6*s.scale)*(isSel?1.5:1),color(n),isSel||n._p.z>.72)}
  rafId=requestAnimationFrame(render)}
 rafId=requestAnimationFrame(render);
+function flyTo(id){const n=nodeMap.get(id);if(!n)return;
+ rotY=-(n.lon||0)*Math.PI/180;
+ rotX=Math.max(-1.1,Math.min(1.1,(n.lat||0)*Math.PI/180));
+ select(id)}
 function select(id){selected=nodeBy(id);if(!selected)return;setActiveLabel(id);
  const constellation=selected.constellation_name?`<p class="meta">☄ ${escapeHtml(selected.constellation_name)}</p>`:'';
  const reply=selected.reply_to?`<p class="meta">↪ ${escapeHtml(selected.reply_to)}への返信</p>`:'';
+ const rel=threadsByStar.get(id)||[];
+ const relItems=rel.map(r=>{const p=nodeMap.get(r.id);if(!p)return '';
+  return `<button class="rel-item" data-id="${escapeHtml(r.id)}"><span class="rel-who">✧ ${escapeHtml(p.name)}の${STAR_TERM}</span>${r.reason?`<span class="rel-reason">── ${escapeHtml(r.reason)}</span>`:''}</button>`}).join('');
+ const relBlock=relItems?`<div class="rel"><b class="rel-h">響き合う${STAR_TERM}</b>${relItems}</div>`:'';
  detail.innerHTML=`<button class="close" aria-label="閉じる">×</button>
   <span class="pill">${escapeHtml(selected.constellation_name||(selected.tags&&selected.tags[0])||'未分類')}</span>
   <h2>${escapeHtml(selected.name)}の${STAR_TERM}</h2>${constellation}${reply}
   <p class="body">${escapeHtml(selected.body)}</p>
-  <a class="btn ghost small voice-link" href="${BASE}/submit?parent_id=${encodeURIComponent(selected.id)}">この${STAR_TERM}に声を寄せる</a>`;
+  ${relBlock}
+  <div class="detail-actions"><a class="btn-mini" href="${BASE}/star/${encodeURIComponent(selected.id)}">この${STAR_TERM}をひらく</a>
+  <a class="btn-mini" href="${BASE}/submit?parent_id=${encodeURIComponent(selected.id)}">声を寄せる</a></div>`;
  detail.classList.add('show');
+ detail.querySelectorAll('.rel-item').forEach(btn=>{btn.onclick=()=>flyTo(btn.dataset.id)});
  detail.querySelector('.close').onclick=()=>{selected=null;setActiveLabel(null);detail.classList.remove('show')};}
 canvas.addEventListener('pointerdown',e=>{drag=true;moved=false;last={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId)});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;moved=true;
@@ -1060,14 +1208,17 @@ def cosmos_page() -> bytes:
     star = pipeline_common.worldview_term("star", "星")
     with db() as conn:
         hidden = pipeline_common.hidden_theme_names(conn)
+        links = pipeline_common.links_payload(conn)
     nodes = cosmos_nodes(cosmos_rows(), hidden=hidden)
     data_json = json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/")
+    links_json = json.dumps(links, ensure_ascii=False).replace("</", "<\\/")
     page = (
         COSMOS_SHELL
         .replace("__FONTS__", PAGE_FONTS)
         .replace("__UNIVERSE__", esc(universe))
         .replace("__STAR__", esc(star))
         .replace("__DATA__", data_json)
+        .replace("__LINKS__", links_json)
         .replace("__BASE__", space_base())
     )
     return page.encode("utf-8")
@@ -1082,15 +1233,36 @@ def questions_page() -> bytes:
     with db() as conn:
         consts = list(conn.execute("SELECT * FROM constellations WHERE space_id=? ORDER BY created_at DESC", (pipeline_common.current_space_id(),)))
 
-    latest_questions = []
-    for c in consts[:5]:
-        q = (c["generated_question_md"] or "").strip()
-        if q:
-            latest_questions.append((c["name"], q))
-    if not latest_questions:
-        latest_questions = [("いまの問い", q) for q in insights["next_live_questions"]]
+    with db() as conn:
+        emergent = pipeline_common.active_questions(conn, limit=8)
 
-    question_cards = "".join(
+    emergent_cards = []
+    for q in emergent:
+        whos = "・".join(dict.fromkeys(s["display_name"] for s in q["source_stars"]))
+        origin = f'<p class="q-origin">{esc(whos)}さんの{esc(star)}から生まれました</p>' if whos else ""
+        source_links = "".join(
+            f'<li class="link-item"><a href="{base}/star/{esc(s["id"])}">'
+            f'<span class="link-who">{esc(s["display_name"])}</span>'
+            f'<span class="link-body">{esc(clip_text(s["body"], 64))}</span></a></li>'
+            for s in q["source_stars"][:4]
+        )
+        source_block = f'<details><summary>この問いを生んだ{esc(star)}</summary><ul class="link-list" style="margin-top:10px">{source_links}</ul></details>' if source_links else ""
+        emergent_cards.append(
+            f'<section class="card question-card"><div class="q-label">星々から生まれた問い</div>'
+            f'<p class="q">{esc(q["question"])}</p>{origin}{source_block}'
+            f'<a class="btn ghost small" href="{base}/submit?question_id={esc(q["id"])}">この問いに、あなたの{esc(star)}を灯す</a></section>'
+        )
+
+    latest_questions = []
+    if not emergent_cards:
+        for c in consts[:5]:
+            q = (c["generated_question_md"] or "").strip()
+            if q:
+                latest_questions.append((c["name"], q))
+        if not latest_questions:
+            latest_questions = [("いまの問い", q) for q in insights["next_live_questions"]]
+
+    question_cards = "".join(emergent_cards) or "".join(
         f'<section class="card question-card"><div class="q-label">{esc(label)}</div><p class="q">{esc(q)}</p>'
         f'<a class="btn ghost small" href="{base}/submit">この問いに{esc(star)}で応える</a></section>'
         for label, q in latest_questions[:5]
@@ -1129,24 +1301,135 @@ def questions_page() -> bytes:
     return layout("問い", body)
 
 
-def submit_page(parent_id: str = "") -> bytes:
+def star_page(star_id: str, born: bool = False) -> bytes | None:
+    """星の詳細ページ（この宇宙のノートビュー）。非公開・他宇宙の星は None を返し404にする。"""
+    star = pipeline_common.worldview_term("star", "星")
+    constellation = pipeline_common.worldview_term("constellation", "星座")
+    base = space_base()
+    sid = pipeline_common.current_space_id()
+    with db() as conn:
+        row = conn.execute(
+            f"SELECT r.*, c.name AS constellation_name FROM reflections r "
+            f"LEFT JOIN constellations c ON c.id=r.constellation_id "
+            f"WHERE r.id=? AND r.space_id=? AND {pipeline_common.VISIBLE_STAR_WHERE.replace('status', 'r.status').replace('visibility', 'r.visibility')}",
+            (star_id, sid),
+        ).fetchone()
+        if not row:
+            return None
+        hidden = pipeline_common.hidden_theme_names(conn)
+        links = pipeline_common.star_links_for(conn, star_id, space_id=sid)
+        voices = conn.execute(
+            f"SELECT * FROM reflections WHERE parent_id=? AND space_id=? AND {pipeline_common.VISIBLE_STAR_WHERE} ORDER BY created_at ASC",
+            (star_id, sid),
+        ).fetchall()
+        parent = None
+        if row_get(row, "parent_id"):
+            parent = conn.execute(
+                f"SELECT id, display_name FROM reflections WHERE id=? AND space_id=? AND {pipeline_common.VISIBLE_STAR_WHERE}",
+                (row["parent_id"], sid),
+            ).fetchone()
+        question = None
+        if row_get(row, "question_id"):
+            question = pipeline_common.get_question(conn, row["question_id"], space_id=sid)
+
+    born_banner = ""
+    if born:
+        born_banner = (
+            '<div class="card notice" style="border-color:var(--gold)">'
+            f'✦ あなたの{esc(star)}が、宇宙に灯りました。<br>'
+            '<span class="small">この光は、いつか誰かの明日を照らします。</span></div>'
+        )
+
+    tags_html = "".join(f'<span class="tag">{esc(t)}</span>' for t in parse_tags(row["tags"]) if t not in hidden)
+    const_badge = ""
+    if row_get(row, "constellation_name"):
+        const_badge = f'<div class="star-relay">☄ この{esc(star)}は「{esc(row["constellation_name"])}」につながっています</div>'
+    question_block = ""
+    if question:
+        question_block = (
+            f'<section class="card question-card"><div class="q-label">この{esc(star)}が応えた問い</div>'
+            f'<p class="q">{esc(question["question"])}</p></section>'
+        )
+    parent_block = ""
+    if parent:
+        parent_block = f'<p class="small">↪ <a href="{base}/star/{esc(parent["id"])}">{esc(parent["display_name"])}の{esc(star)}</a>への返信</p>'
+
+    if links:
+        link_items = "".join(
+            f'<li class="link-item"><a href="{base}/star/{esc(l["id"])}">'
+            f'<span class="link-who">{esc(l["display_name"])}</span>'
+            f'<span class="link-body">{esc(clip_text(l["body"], 64))}</span></a>'
+            + (f'<p class="link-reason">── {esc(l["reason"])}</p>' if l["reason"] else "")
+            + '</li>'
+            for l in links
+        )
+        links_block = (
+            f'<section class="resonance"><h2>この{esc(star)}と響き合う{esc(star)}</h2>'
+            f'<ul class="link-list">{link_items}</ul></section>'
+        )
+    else:
+        links_block = (
+            f'<section class="resonance"><h2>この{esc(star)}と響き合う{esc(star)}</h2>'
+            f'<p class="small">まだ糸は張られていません。今夜、宇宙の織り手がこの{esc(star)}の響き合いを探します。</p></section>'
+        )
+
+    voices_html = "".join(
+        f'<div class="voice"><span class="voice-who">{esc(v["display_name"])}</span><p>{esc(v["body"])}</p></div>'
+        for v in voices
+    )
+    voices_block = f'<section class="voices-sec"><h2>寄せられた声</h2><div class="voices">{voices_html}</div></section>' if voices_html else ""
+
+    body = f'''
+    {born_banner}
+    <p class="small"><a href="{base}/">← みんなの{esc(star)}にもどる</a> ・ <a href="{base}/cosmos">宇宙でこの{esc(star)}を見る</a></p>
+    <article class="card star-card star-single">
+      <header><span class="star-dot"></span><span class="star-who">{esc(row["display_name"])}</span></header>
+      <p class="star-body">{esc(row["body"])}</p>
+      <div class="tags">{tags_html}</div>
+      {const_badge}
+      {parent_block}
+    </article>
+    {question_block}
+    {links_block}
+    {voices_block}
+    <div class="cta"><a class="btn" href="{base}/submit?parent_id={esc(row["id"])}">この{esc(star)}に声を寄せる</a><a class="btn ghost" href="{base}/cosmos">宇宙を旅する</a></div>
+    '''
+    return layout(f'{row["display_name"]}の{star}', body)
+
+
+def submit_page(parent_id: str = "", question_id: str = "") -> bytes:
     star = pipeline_common.worldview_term("star", "星")
     reply_note = (
         f'<p class="small">選んだ{esc(star)}への返信として届きます。</p>' if parent_id else ""
     )
-    sent_banner = '<div class="card notice" style="border-color:var(--gold)">✦ あなたの星が宇宙に灯りました。ありがとうございます。</div>' if "" else ""
+    question_block = ""
+    title = f"{star}を送る"
+    if question_id:
+        with db() as conn:
+            q = pipeline_common.get_question(conn, question_id)
+        if q and q["status"] == "active":
+            title = "この問いに応える"
+            question_block = (
+                f'<section class="card question-card"><div class="q-label">星々から生まれた問い</div>'
+                f'<p class="q">{esc(q["question"])}</p>'
+                f'<p class="small">うまくまとめなくて大丈夫です。いま浮かんだことを、そのままの言葉で。</p></section>'
+            )
+        else:
+            question_id = ""
     body = f'''
-    <h1>{esc(star)}を送る</h1>
+    <h1>{esc(title)}</h1>
+    {question_block}
     <div class="card notice">あなたの気づきが、この宇宙の{esc(star)}になります。送信後すぐに公開ページに灯ります。<br><span class="small">表示名は省略すると匿名になります。掲載をやめたい時は事務局までご連絡ください。</span></div>
     <form class="card" method="post" action="{space_base()}/submit">
       <input type="hidden" name="parent_id" value="{esc(parent_id)}">
+      <input type="hidden" name="question_id" value="{esc(question_id)}">
       {reply_note}
       <p><label>表示名（省略すると匿名になります）<br><input name="display_name" placeholder="例：ノビー"></label></p>
       <p><label>気づき・感想・問い<br><textarea name="body" rows="5" placeholder="いま心に残っていることを、そのままの言葉で" required></textarea></label></p>
       <p><button>{esc(star)}として送る</button></p>
     </form>
     '''
-    return layout(star + "を送る", body)
+    return layout(title, body)
 
 
 def staticize_html(page: bytes) -> str:
@@ -1161,6 +1444,9 @@ def staticize_html(page: bytes) -> str:
     for old, new in replacements.items():
         html_text = html_text.replace(old, new)
     html_text = re.sub(r'href="/submit\?parent_id=[^"]+"', 'href="./questions.html#send"', html_text)
+    html_text = re.sub(r'href="/submit\?question_id=[^"]+"', 'href="./questions.html#send"', html_text)
+    html_text = re.sub(r'href="/star/[^"]+"', 'href="./questions.html#send"', html_text)
+    html_text = re.sub(r'href="/\?theme=[^"]+"', 'href="./"', html_text)
     return html_text
 
 
@@ -1964,13 +2250,20 @@ class Handler(BaseHTTPRequestHandler):
             if is_admin_path(route_path) and not self.require_admin():
                 return
             if route_path == "/":
-                self.send_html(public_page())
+                self.send_html(public_page(theme=qs.get("theme", [""])[0]))
             elif route_path == "/cosmos":
                 self.send_html(cosmos_page())
             elif route_path == "/questions":
                 self.send_html(questions_page())
             elif route_path == "/submit":
-                self.send_html(submit_page(qs.get("parent_id", [""])[0]))
+                self.send_html(submit_page(qs.get("parent_id", [""])[0], qs.get("question_id", [""])[0]))
+            elif route_path.startswith("/star/"):
+                star_id = route_path.removeprefix("/star/").strip("/")
+                page = star_page(star_id, born=bool(qs.get("born")))
+                if page is None:
+                    self.send_html(layout("404", f"<h1>404</h1><p>この星は見つかりませんでした。</p>"), 404)
+                else:
+                    self.send_html(page)
             elif route_path == "/admin":
                 self.send_html(admin_page())
             elif route_path == "/admin/themes":
@@ -2066,8 +2359,10 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 display_name = display_name[:MAX_NAME_CHARS]
                 parent_id = (data.get("parent_id") or "").strip() or None
-                insert_reflection("web", display_name, body, parent_id=parent_id, status="approved")
-                self.redirect(f"{base}/?sent=1")
+                question_id = (data.get("question_id") or "").strip() or None
+                rid = insert_reflection("web", display_name, body, parent_id=parent_id, status="approved", question_id=question_id)
+                # 誕生の祝福: 自分の星のページへ着地し、宇宙に灯ったことが見える
+                self.redirect(f"{base}/star/{rid}?born=1")
             elif path == "/api/admin/approve":
                 data = self.read_form_or_json()
                 approve(data.get("id", ""))

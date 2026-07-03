@@ -842,5 +842,154 @@ class MultiTenantAdminTest(unittest.TestCase):
         self.assertEqual(names, {"Aの星座"})  # 他スペースのBの星座は混ざらない
 
 
+class ResonanceAndQuestionsTest(unittest.TestCase):
+    """光の糸（意味リンク）・星々から生まれた問い・星詳細ページの循環。"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = app.DB_PATH
+        self._original_api_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+        app.DB_PATH = Path(self._tmpdir.name) / "kizuki_tree.sqlite3"
+        app.init_db()
+
+    def tearDown(self):
+        app.DB_PATH = self._original_db_path
+        if self._original_api_key is not None:
+            os.environ["ANTHROPIC_API_KEY"] = self._original_api_key
+        pipeline_common.clear_current_space()
+        self._tmpdir.cleanup()
+
+    def _add_star(self, rid, body, name="参加者", status="approved", visibility="universe", space_id=None, tags=("笑い",)):
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (rid, "web", name, body, json.dumps(list(tags), ensure_ascii=False),
+                 status, pipeline_common.now_iso(), space_id or pipeline_common.default_space_id(), "insight", visibility),
+            )
+
+    def test_star_page_shows_resonating_stars_with_reason(self):
+        self._add_star("st1", "待つことが苦手だと気づいた", name="Aさん")
+        self._add_star("st2", "焦りの奥に願いがあった", name="Bさん")
+        with app.db() as conn:
+            pipeline_common.upsert_star_link(conn, "st1", "st2", "どちらも「待つ」ことへの気づき")
+        page = app.star_page("st1").decode("utf-8")
+        self.assertIn("待つことが苦手", page)
+        self.assertIn("響き合う", page)
+        self.assertIn("Bさん", page)
+        self.assertIn("どちらも「待つ」ことへの気づき", page)
+        self.assertIn('/star/st2', page)
+
+    def test_star_page_hides_unlisted_and_unknown_stars(self):
+        self._add_star("st3", "承認待ちの星", status="pending")
+        self.assertIsNone(app.star_page("st3"))
+        self.assertIsNone(app.star_page("no-such-star"))
+
+    def test_star_page_promises_weaving_when_no_links(self):
+        self._add_star("st4", "まだひとりぼっちの星")
+        page = app.star_page("st4").decode("utf-8")
+        self.assertIn("まだ糸は張られていません", page)
+        self.assertIn("宇宙の織り手", page)
+
+    def test_star_page_excludes_partner_hidden_after_weaving(self):
+        self._add_star("st5", "残る星")
+        self._add_star("st6", "あとで非公開になる星", name="Cさん")
+        with app.db() as conn:
+            pipeline_common.upsert_star_link(conn, "st5", "st6", "理由")
+            conn.execute("UPDATE reflections SET status='rejected' WHERE id='st6'")
+        page = app.star_page("st5").decode("utf-8")
+        self.assertNotIn("Cさん", page)
+        self.assertIn("まだ糸は張られていません", page)
+
+    def test_submit_with_question_links_star_and_records_relay(self):
+        self._add_star("q-src1", "素材の星")
+        with app.db() as conn:
+            qid = pipeline_common.create_emergent_question(conn, "テストの問いですか。", "", ["q-src1"])
+        rid = app.insert_reflection("web", "回答者", "問いへの応答です", status="approved", question_id=qid)
+        with app.db() as conn:
+            row = conn.execute("SELECT question_id FROM reflections WHERE id=?", (rid,)).fetchone()
+            relays = conn.execute("SELECT kind FROM relay_events WHERE kind='question_answered'").fetchall()
+        self.assertEqual(row["question_id"], qid)
+        self.assertEqual(len(relays), 1)
+        page = app.star_page(rid).decode("utf-8")
+        self.assertIn("この星が応えた問い", page)
+        self.assertIn("テストの問いですか。", page)
+
+    def test_submit_ignores_question_from_other_space(self):
+        with app.db() as conn:
+            pipeline_common.create_space(conn, "other-uni", "他の宇宙")
+            other_qid = pipeline_common.create_emergent_question(conn, "他宇宙の問い。", "", [], space_id="other-uni")
+        rid = app.insert_reflection("web", "回答者", "クロステナント防止テスト", status="approved", question_id=other_qid)
+        with app.db() as conn:
+            row = conn.execute("SELECT question_id FROM reflections WHERE id=?", (rid,)).fetchone()
+        self.assertIsNone(row["question_id"])
+
+    def test_public_page_shows_emergent_questions_and_theme_filter(self):
+        self._add_star("pp1", "笑いで軽くなった", name="Aさん", tags=("笑い",))
+        self._add_star("pp2", "身体がゆるんだ", name="Bさん", tags=("身体感覚",))
+        with app.db() as conn:
+            pipeline_common.create_emergent_question(conn, "笑いのあと、何が残りますか。", "", ["pp1", "pp2"])
+        page = app.public_page().decode("utf-8")
+        self.assertIn("星々から生まれた問い", page)
+        self.assertIn("笑いのあと、何が残りますか。", page)
+        self.assertIn("あなたの星を灯す", page)
+        self.assertIn("Aさん・Bさん", page)  # 問いの出自（還流の可視化）
+        self.assertIn("テーマでたどる", page)
+        filtered = app.public_page(theme="身体感覚").decode("utf-8")
+        self.assertIn("身体がゆるんだ", filtered)
+        self.assertNotIn("笑いで軽くなった", filtered)
+        unknown = app.public_page(theme="存在しないテーマ").decode("utf-8")
+        self.assertIn("笑いで軽くなった", unknown)  # 不明テーマは全件表示に戻す
+
+    def test_public_page_shows_resonance_line_and_star_links(self):
+        self._add_star("pr1", "星その1", name="Aさん")
+        self._add_star("pr2", "星その2", name="Bさん")
+        with app.db() as conn:
+            pipeline_common.upsert_star_link(conn, "pr1", "pr2", "理由の一行")
+        page = app.public_page().decode("utf-8")
+        self.assertIn("響き合っています", page)
+        self.assertIn('/star/pr1', page)
+
+    def test_relay_feed_wording_for_new_kinds(self):
+        sid = pipeline_common.default_space_id()
+        with app.db() as conn:
+            pipeline_common.record_relay(conn, sid, "link_woven", {"link_count": 3, "pairs": []})
+            pipeline_common.record_relay(conn, sid, "question_born", {"question": "生まれた問い？", "source_whos": ["Aさん"]}, star_who="Aさん")
+            pipeline_common.record_relay(conn, sid, "question_answered", {"question": "生まれた問い？", "who": "Bさん"}, star_who="Bさん")
+        page = app.public_page().decode("utf-8")
+        self.assertIn("光の糸が張られました", page)
+        self.assertIn("問いが生まれました", page)
+        self.assertIn("問いに応えました", page)
+
+    def test_cosmos_page_embeds_links_and_escapes(self):
+        self._add_star("cs1", "宇宙の星1")
+        self._add_star("cs2", "宇宙の星2")
+        with app.db() as conn:
+            pipeline_common.upsert_star_link(conn, "cs1", "cs2", "静かな理由</script>")
+        page = app.cosmos_page().decode("utf-8")
+        self.assertIn("starLinks=", page)
+        self.assertIn("cs1", page)
+        self.assertNotIn("理由</script>", page)  # JSON埋め込みで</がエスケープされる
+        self.assertIn("drawThread", page)
+        self.assertIn("flyTo", page)
+
+    def test_staticize_replaces_new_routes(self):
+        html_text = app.staticize_html(
+            b'<a href="/star/abc123">x</a><a href="/submit?question_id=q1">y</a><a href="/?theme=%E7%AC%91%E3%81%84">z</a>'
+        )
+        self.assertNotIn('href="/star/', html_text)
+        self.assertNotIn("question_id=", html_text)
+        self.assertNotIn('href="/?theme=', html_text)
+
+    def test_submit_page_renders_question_context(self):
+        with app.db() as conn:
+            qid = pipeline_common.create_emergent_question(conn, "フォームに出る問い。", "", [])
+        page = app.submit_page(question_id=qid).decode("utf-8")
+        self.assertIn("この問いに応える", page)
+        self.assertIn("フォームに出る問い。", page)
+        page2 = app.submit_page(question_id="unknown-q").decode("utf-8")
+        self.assertNotIn("この問いに応える", page2)  # 不明な問いは通常フォーム
+
+
 if __name__ == "__main__":
     unittest.main()
