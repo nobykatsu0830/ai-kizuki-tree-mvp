@@ -206,6 +206,14 @@ def run(limit: int = BATCH_LIMIT) -> int:
             print("分類対象の気づきはありません。")
         weave = weave_all_spaces(conn)
         print(f"星座を編みました: {weave['spaces']}スペース / {weave['constellations']}星座（光のリレー更新）")
+        # 光の糸（星同士の意味リンク）と、星々から生まれた問いを編む
+        from pipeline import weave as weave_mod
+
+        resonance = weave_mod.weave_all(conn)
+        print(
+            f"光の糸を編みました: {resonance.get('spaces', 0)}スペース / "
+            f"糸{resonance.get('new_links', 0)}本 / 問い{resonance.get('new_questions', 0)}件"
+        )
         return updated
 
 
