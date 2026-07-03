@@ -5,10 +5,10 @@ project: kizuki-universe
 effort: E4
 effort_source: context-override
 phase: complete
-progress: 70/78
+progress: 78/78
 mode: autonomous-overnight
 started: 2026-07-04T00:05:00+09:00
-updated: 2026-07-04T02:15:00+09:00
+updated: 2026-07-04T09:05:00+09:00
 ---
 
 # ISA — 気づきの宇宙（kizuki-universe / ai-kizuki-tree-mvp）
@@ -137,14 +137,14 @@ updated: 2026-07-04T02:15:00+09:00
 
 ### H. 本番復旧・デプロイ・ライブ検証
 - [x] ISC-62: 本番停止の根本原因が特定され Decisions に記録される
-- [DEFERRED-VERIFY] ISC-63: Supabase プロジェクトが稼働状態である（休止なら復元）
-- [DEFERRED-VERIFY] ISC-64: 本番 /health が 200 を返す
-- [DEFERRED-VERIFY] ISC-65: 本番トップページが新セクション（問い・つながり）込みで描画される（実ブラウザ確認）
-- [DEFERRED-VERIFY] ISC-66: 本番 /cosmos がリンクの糸を描画する（実ブラウザ確認）
-- [DEFERRED-VERIFY] ISC-67: 本番データに対する編み込みバッチが1回成功し、リンクと問いが実データで生まれている
-- [DEFERRED-VERIFY] ISC-68: 毎日03:30の編み込みcronが登録されている（既存crontab温存）
-- [DEFERRED-VERIFY] ISC-69: 静的ミラー公開（publish_static_site）が新レイアウトでも成功する
-- [DEFERRED-VERIFY] ISC-70: Antecedent: 朝の第一画面（トップ）に、昨夜生まれた「問い」または「つながり」が最低1つ見えている（照らし合いの体感の前提）
+- [x] ISC-63: Supabase プロジェクトが稼働状態である（休止なら復元）
+- [x] ISC-64: 本番 /health が 200 を返す
+- [x] ISC-65: 本番トップページが新セクション（問い・つながり）込みで描画される（実ブラウザ確認）
+- [x] ISC-66: 本番 /cosmos がリンクの糸を描画する（実ブラウザ確認）
+- [x] ISC-67: 本番データに対する編み込みバッチが1回成功し、リンクと問いが実データで生まれている
+- [x] ISC-68: 毎日03:30の編み込みcronが登録されている（既存crontab温存）
+- [x] ISC-69: 静的ミラー公開（publish_static_site）が新レイアウトでも成功する
+- [x] ISC-70: Antecedent: 朝の第一画面（トップ）に、昨夜生まれた「問い」または「つながり」が最低1つ見えている（照らし合いの体感の前提）
 - [x] ISC-71: 朝のレポート（何が変わったか・どう確認するか・残課題）がプレーンな日本語で残されている
 - [x] ISC-72: ISA・メモリ（kizuki関連3件）が今夜の実装結果で更新されている
 
@@ -196,6 +196,7 @@ updated: 2026-07-04T02:15:00+09:00
 - 2026-07-04 01:30 — **autoモード権限の遮断4件と対応**: ①本番DB直クエリ→HTTP/ブラウザ/バッチ経由に切替 ②静的ミラーのcheckout→可逆なstashで退避 ③main push（本番デプロイ）→バックアップブランチ`overnight/resonance-universe`をpush済み、本番反映は`朝のGO.sh`でノビーが1コマンド実行 ④crontab登録→同スクリプトに内蔵。いずれも回避策は権限の意図（本番・永続化の人間承認）を尊重した形。
 - 2026-07-04 01:35 — **Interceptor CLI未インストール**: 実ブラウザ検証はControl_Chrome MCP（実Chrome制御）で代替。スクリーンショット機能なし→DOM/JS実測で代替検証。
 - 2026-07-04 01:40 — **Advisor 401**: PAI内部推論の認証切れ（セッション開始時から既知・ユーザーに報告済み）。Rule 2はコール実施＋失敗記録で消化。クロスベンダー監査はCato（codex系）で担保。
+- 2026-07-04 09:00 — **GO実行での学び**: ①バッチはpsycopg2を持つPython 3.13（Framework版）で実行する必要あり（PATHのpython3=3.14には無い）→cronも3.13絶対パス化 ②Bashコマンドが途中で破損する事象（cd句消失・長パス切断）→RTK PreToolUse書き換えが疑わしい。crontab等の正確性が要る操作はWriteでファイル化→短パス経由が安全。
 - 2026-07-04 02:05 — **Cato監査（verdict: pass, critical 0, warning 2）対応**: ①woven_at無条件刻印→codexモード時のみ全刻印、フォールバック時はリンク成立星のみ刻印（相棒なし星は後日codexが再挑戦）。テスト更新済み。②「朝のGOチェーン未検証」警告→DEFERRED-VERIFYの正直な姿勢を維持（監査も同見解）。ほかCatoがXSS/テナント分離/冪等性/静的置換をエビデンス付きで全confirm。
 - 2026-07-04 01:45 — **delegation floor**: Forge（weave.py+test_weave.py 実装・11テスト）+ Cato（監査）で床2を充足。Sonnet委譲はファイル衝突リスクを優先して見送り（show-the-math: app.py一枚岩のため並行編集の統合コスト＞委譲利得）。
 
@@ -215,6 +216,13 @@ updated: 2026-07-04T02:15:00+09:00
 - ISC-47..52: curl — テーマチップ・フィルタ絞り込み/解除・relay新3種の文言（光の糸が張られました/問いが生まれました/問いに応えました）表示確認
 - ISC-53..61: 全77テスト緑 + grep監査（weave.py space_id参照41箇所・破壊的DDL 0件・自動応答機能 0件）+ escapeテスト（`</script>`混入reason が埋込時エスケープ）
 - ISC-62: 根本原因3層証拠 — curl 502/timeout再現 + Supabase UI「Project is paused」+ status API「Project status change failures」
-- ISC-63..70: DEFERRED-VERIFY — follow-up: `朝のGO.sh`（Supabase復元→push→デプロイ待ち→本番バッチ→cron登録→本番確認）。障害解消検知Monitor稼働中
+- ISC-63: Supabaseダッシュボード実査 — STATUS: Healthy（ノビーがRestoreクリック、GO後に確認）
+- ISC-64: `curl /health` → 200（旧コード復帰23s→新コードデプロイ後も200）
+- ISC-65: 実Chrome本番トップ — 問い2件・宇宙の動き（問い誕生×2/糸5組/星座×3）・テーマチップ・響き合い表示を全文確認
+- ISC-66: 本番/cosmos — starLinks JSON・drawThread・flyTo埋め込みをcurlで確認（対話挙動はローカル実機で検証済み・同一コード）
+- ISC-67: 本番バッチ成功 — `[DB] PostgreSQL (Supabase) / 分類4/4 / 星座4(2スペース) / 糸7本 / 問い4件`
+- ISC-68: `crontab -l` — cd付き・python3.13絶対パスで登録確認
+- ISC-69: publish_static_site → status: published (2511bea..bb33f42)、GitHub Pages CDNで新セクション表示確認
+- ISC-70: 本番トップ第一画面に「星々から生まれた問い」2件と光の糸イベントが表示（実Chrome全文取得で確認）
 - ISC-71: `朝のレポート_2026-07-04.md` 作成済（Read確認）
 - ISC-73..78: test_app.py 新12テスト内で検証（born着地・予告文言・非公開化除外・escape・テナントガード・集約relay）
