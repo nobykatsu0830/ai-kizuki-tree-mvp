@@ -252,3 +252,4 @@ updated: 2026-07-04T12:55:00+09:00
 - ISC-90: `set_space_join_password.py noby-universe ""` 実行→get_space_join_hashがNoneに戻り投稿再オープンを確認
 - ISC-91: `curl /submit` `/join` のレスポンス本文にSHA-256ハッシュ文字列が一切出現しないことを目視確認（Cookie以外に平文/ハッシュ露出なし）
 - ISC-92: オープンリダイレクト修正後に実HTTP再検証 — `next=//evil.com/phish`→Location:/submit、`next=https://evil.com/phish`→Location:/submit、正当な`next=/star/abc123`→Location:/star/abc123（退行なし）
+- **本番反映済み（2026-07-04 13:10）**: mainへpush→デプロイ確認→本番Postgresへ`init_db()`実行（`join_password_hash`列を新規適用、ensure_columnで既存データ無傷）→`set_space_join_password.py noby-universe`で合言葉「wokonomono」を設定（ノビー指定）→本番curlで全シナリオ確認: ゲート表示/誤パスワード拒否/正パスワードでCookie発行/Cookie再利用で投稿フォーム到達/閲覧ページ(`/` `/cosmos` `/questions`)は引き続き200。静的ミラーは投稿フォームを含まないため無変更。
