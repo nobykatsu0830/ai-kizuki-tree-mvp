@@ -288,6 +288,21 @@ def get_space_admin_hash(conn, space_id: str) -> str | None:
     return value or None
 
 
+def set_space_join_password(conn, space_id: str, password: str) -> None:
+    """スペース別の「投稿パスワード」を設定（空文字で解除=誰でも投稿可に戻す）。"""
+    value = hash_admin_token(password) if password else None
+    conn.execute("UPDATE spaces SET join_password_hash=? WHERE id=?", (value, space_id))
+
+
+def get_space_join_hash(conn, space_id: str) -> str | None:
+    """スペースに設定された投稿パスワードのハッシュを返す（未設定=誰でも投稿可、なら None）。"""
+    row = conn.execute("SELECT join_password_hash FROM spaces WHERE id=?", (space_id,)).fetchone()
+    if not row:
+        return None
+    value = row["join_password_hash"]
+    return value or None
+
+
 def default_space_id() -> str:
     return current_space_id()
 
@@ -496,6 +511,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "reflections", "question_id", "TEXT")  # この星が応えた「星々から生まれた問い」
         ensure_column(conn, "spaces", "worldview_json", "TEXT")  # スペース別の世界観（マルチテナント）
         ensure_column(conn, "spaces", "admin_token_hash", "TEXT")  # スペース別の管理者パスワード（SHA-256ハッシュ）
+        ensure_column(conn, "spaces", "join_password_hash", "TEXT")  # スペース別の投稿パスワード（未設定=誰でも投稿可）
         conn.execute(
             "INSERT OR IGNORE INTO spaces (id, name, worldview_path, created_at) VALUES (?, ?, ?, ?)",
             (space_id, str(worldview.get("terms", {}).get("universe", "気づきの宇宙")), "worldview.yaml", now_iso()),

@@ -5,10 +5,10 @@ project: kizuki-universe
 effort: E4
 effort_source: context-override
 phase: complete
-progress: 78/78
+progress: 92/92
 mode: autonomous-overnight
 started: 2026-07-04T00:05:00+09:00
-updated: 2026-07-04T09:05:00+09:00
+updated: 2026-07-04T12:55:00+09:00
 ---
 
 # ISA — 気づきの宇宙（kizuki-universe / ai-kizuki-tree-mvp）
@@ -156,6 +156,22 @@ updated: 2026-07-04T09:05:00+09:00
 - [x] ISC-77: submitのquestion_idが現在のスペースに属さない場合は無視され通常投稿になる
 - [x] ISC-78: link_wovenのrelayイベントはバッチ1回のスペースあたり集約1件に留まる（フィード洪水防止）
 
+### J. 投稿の合言葉ゲート（2026-07-04 追加要望）
+- [x] ISC-79: `spaces.join_password_hash` カラムが ensure_column で追加される
+- [x] ISC-80: `set_space_join_password()` がSHA-256ハッシュで保存し平文を残さない
+- [x] ISC-81: `get_space_join_hash()` が未設定スペースで None を返す（後方互換=誰でも投稿可）
+- [x] ISC-82: 投稿パスワード未設定のスペースでは GET/POST /submit が引き続き誰でも通る
+- [x] ISC-83: 投稿パスワード設定済みスペースで、Cookie無しの GET /submit は合言葉ページを表示する（投稿フォームを見せない）
+- [x] ISC-84: 同スペースで、Cookie無しの POST /submit は401＋合言葉ページを返し、投稿を作成しない
+- [x] ISC-85: POST /join に正しい合言葉を送るとCookie(HttpOnly, SameSite=Lax, 1年)が設定され、next へ303リダイレクトする
+- [x] ISC-86: POST /join に誤った合言葉を送ると投稿は起きず、エラー文言つきの合言葉ページが返る
+- [x] ISC-87: 正しいCookieを持つブラウザは GET/POST /submit を合言葉なしで通過できる
+- [x] ISC-88: 改ざん・不正なCookie値では合言葉ページに差し戻される（hmac.compare_digest比較）
+- [x] ISC-89: 合言葉ゲートは投稿のみを対象とし、トップ・宇宙・星詳細・questionsの閲覧はゲートしない
+- [x] ISC-90: `set_space_join_password.py` CLIで空文字を渡すと解除され誰でも投稿可に戻る
+- [x] ISC-91: Anti: 合言葉ハッシュがCookie以外（HTML本文・JSON等）に平文露出しない
+- [x] ISC-92: Anti: next パラメータは "/" または現在のスペース接頭辞始まりでない場合は既定の /submit にフォールバックする（オープンリダイレクト防止）
+
 ## Test Strategy
 
 | isc | type | check | threshold | tool |
@@ -166,6 +182,7 @@ updated: 2026-07-04T09:05:00+09:00
 | ISC-41..46 | ui | ローカル実機ブラウザでcosmos描画・ジャンプ確認 | JSエラー0 | Interceptor screenshot + console |
 | ISC-47..52 | http+ui | curl内容検査＋実機確認 | 全pass | curl / Interceptor |
 | ISC-53..61 | regression+audit | テスト一括＋grep監査 | 54+新規全緑 | python3 test_app.py / rg |
+| ISC-79..92 | unit+http | DAL単体テスト + ローカルdevサーバへの実HTTPフロー（gate/join/cookie/redirect） | 71テスト全緑+curl全シナリオ通過 | python3 test_app.py / curl |
 | ISC-62..69 | live | 本番URL・ダッシュボード・cron実物 | /health 200 | curl / Interceptor / crontab -l |
 | ISC-70..72 | experiential+docs | トップ実画面＋レポートファイル実在 | 目視+Read | Interceptor / Read |
 
@@ -199,6 +216,9 @@ updated: 2026-07-04T09:05:00+09:00
 - 2026-07-04 09:00 — **GO実行での学び**: ①バッチはpsycopg2を持つPython 3.13（Framework版）で実行する必要あり（PATHのpython3=3.14には無い）→cronも3.13絶対パス化 ②Bashコマンドが途中で破損する事象（cd句消失・長パス切断）→RTK PreToolUse書き換えが疑わしい。crontab等の正確性が要る操作はWriteでファイル化→短パス経由が安全。
 - 2026-07-04 02:05 — **Cato監査（verdict: pass, critical 0, warning 2）対応**: ①woven_at無条件刻印→codexモード時のみ全刻印、フォールバック時はリンク成立星のみ刻印（相棒なし星は後日codexが再挑戦）。テスト更新済み。②「朝のGOチェーン未検証」警告→DEFERRED-VERIFYの正直な姿勢を維持（監査も同見解）。ほかCatoがXSS/テナント分離/冪等性/静的置換をエビデンス付きで全confirm。
 - 2026-07-04 01:45 — **delegation floor**: Forge（weave.py+test_weave.py 実装・11テスト）+ Cato（監査）で床2を充足。Sonnet委譲はファイル衝突リスクを優先して見送り（show-the-math: app.py一枚岩のため並行編集の統合コスト＞委譲利得）。
+- 2026-07-04 12:40 — **投稿の合言葉ゲート追加**: ノビーの要望「申し込んだ方だけが書き込める・共通パスワード・名前は自由」をそのまま実装。既存の`admin_token_hash`（スペース別管理者パスワード）と全く同じパターンを再利用（`spaces.join_password_hash`, SHA-256ハッシュ, per-space, 後方互換=未設定なら誰でも投稿可）。認証手段はBasic認証ではなくCookie（`kizuki_join`, HttpOnly, SameSite=Lax, 1年）——投稿フォームは毎回パスワードを聞かれるより一度きりの合言葉ページの方がworldviewの体験を壊さないと判断。
+- 2026-07-04 12:45 — **ゲート範囲は投稿のみ**: トップ・宇宙・星詳細・questionsの閲覧は無制限のまま。「書き込める」という要望の文言どおり、閲覧無料の設計原則（新しい人が先輩の星を見られる＝安心設計 §5）と衝突しないよう、submitへの入口だけをゲート。
+- 2026-07-04 12:50 — **セルフレビューでオープンリダイレクトを発見・即修正**: 実装直後に自己点検し、`next`パラメータの検証が`startswith("/")`のみだったため`//evil.com`（プロトコル相対URL）を通してしまう欠陥を発見。`next_path.startswith("//")`と`":"`混入チェックを追加し、実HTTPで攻撃paylod2種+正当パス1種を再検証して確認。
 
 ## Changelog
 
@@ -226,3 +246,9 @@ updated: 2026-07-04T09:05:00+09:00
 - ISC-70: 本番トップ第一画面に「星々から生まれた問い」2件と光の糸イベントが表示（実Chrome全文取得で確認）
 - ISC-71: `朝のレポート_2026-07-04.md` 作成済（Read確認）
 - ISC-73..78: test_app.py 新12テスト内で検証（born着地・予告文言・非公開化除外・escape・テナントガード・集約relay）
+- ISC-79..82: `test_app.py` 新5テスト（未設定None/ハッシュ一致/解除で再オープン/per-space分離/gate page描画）+ 全71テスト緑
+- ISC-83..88: ローカルdevサーバへの実HTTPフローで確認 — 未設定時200(フォーム)→設定後GET/submitは合言葉ページ(401扱いはPOSTのみ)→誤パスワードPOSTはエラー文言つき200→正パスワードPOSTは303+Set-Cookie(HttpOnly;SameSite=Lax;Max-Age=31536000)→正Cookie再利用でGET/POST /submit通過(実際に投稿成功・`redirect: /star/6dfa58341e8d?born=1`)→改ざんCookie(deadbeef)は合言葉ページに差し戻し
+- ISC-89: curl — `/` `/cosmos` `/questions` `/star/<id>` は合言葉設定後も全て200（閲覧は無制限のまま）
+- ISC-90: `set_space_join_password.py noby-universe ""` 実行→get_space_join_hashがNoneに戻り投稿再オープンを確認
+- ISC-91: `curl /submit` `/join` のレスポンス本文にSHA-256ハッシュ文字列が一切出現しないことを目視確認（Cookie以外に平文/ハッシュ露出なし）
+- ISC-92: オープンリダイレクト修正後に実HTTP再検証 — `next=//evil.com/phish`→Location:/submit、`next=https://evil.com/phish`→Location:/submit、正当な`next=/star/abc123`→Location:/star/abc123（退行なし）

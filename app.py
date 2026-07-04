@@ -2092,6 +2092,26 @@ def space_base() -> str:
     return "" if sid == pipeline_common.DEFAULT_SPACE_ID else f"/s/{sid}"
 
 
+JOIN_COOKIE_NAME = "kizuki_join"
+
+
+def join_gate_page(next_path: str = "", error: bool = False) -> bytes:
+    star = pipeline_common.worldview_term("star", "星")
+    universe = pipeline_common.worldview_term("universe", "気づきの宇宙")
+    error_html = '<div class="card notice" style="border-color:#e08585">合言葉が違うようです。もう一度お試しください。</div>' if error else ""
+    body = f'''
+    <h1>{esc(star)}を送るには</h1>
+    <div class="card notice">この{esc(universe)}に{esc(star)}を送るには、合言葉が必要です。<br><span class="small">お申し込みいただいた方にお伝えしています。わからない場合は事務局までご連絡ください。</span></div>
+    {error_html}
+    <form class="card" method="post" action="{space_base()}/join">
+      <input type="hidden" name="next" value="{esc(next_path)}">
+      <p><label>合言葉<br><input type="password" name="password" autofocus required></label></p>
+      <p><button>すすむ</button></p>
+    </form>
+    '''
+    return layout("合言葉", body)
+
+
 class Handler(BaseHTTPRequestHandler):
     def _basic_password(self) -> str | None:
         """Authorization: Basic ヘッダからパスワード部分を取り出す（無ければ None）。"""
@@ -2125,6 +2145,31 @@ class Handler(BaseHTTPRequestHandler):
             return hmac.compare_digest(password, env_token)
         client = self.client_address[0] if self.client_address else ""
         return client in ("127.0.0.1", "::1")
+
+    def _cookies(self) -> dict[str, str]:
+        raw = self.headers.get("Cookie", "")
+        out: dict[str, str] = {}
+        for part in raw.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, _, v = part.partition("=")
+                out[k.strip()] = v.strip()
+        return out
+
+    def join_authorized(self) -> bool:
+        """スペース別の投稿パスワードで認証する。未設定のスペースは誰でも投稿可（後方互換）。"""
+        space_id = pipeline_common.current_space_id()
+        with db() as conn:
+            join_hash = pipeline_common.get_space_join_hash(conn, space_id)
+        if not join_hash:
+            env_password = os.environ.get("JOIN_PASSWORD", "")
+            if space_id != pipeline_common.DEFAULT_SPACE_ID or not env_password:
+                return True
+            join_hash = pipeline_common.hash_admin_token(env_password)
+        cookie_value = self._cookies().get(JOIN_COOKIE_NAME, "")
+        if not cookie_value:
+            return False
+        return hmac.compare_digest(cookie_value, join_hash)
 
     def require_admin(self) -> bool:
         if self.admin_authorized():
@@ -2256,7 +2301,12 @@ class Handler(BaseHTTPRequestHandler):
             elif route_path == "/questions":
                 self.send_html(questions_page())
             elif route_path == "/submit":
+                if not self.join_authorized():
+                    self.send_html(join_gate_page(next_path=route_path + (f"?{parsed.query}" if parsed.query else "")))
+                    return
                 self.send_html(submit_page(qs.get("parent_id", [""])[0], qs.get("question_id", [""])[0]))
+            elif route_path == "/join":
+                self.send_html(join_gate_page(next_path=qs.get("next", [""])[0]))
             elif route_path.startswith("/star/"):
                 star_id = route_path.removeprefix("/star/").strip("/")
                 page = star_page(star_id, born=bool(qs.get("born")))
@@ -2346,7 +2396,33 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path in ("/api/line-webhook", "/webhook/line"):
                 self.handle_line_webhook(self.read_raw())
+            elif path == "/join":
+                data = self.read_form_or_json()
+                password = data.get("password") or ""
+                next_path = (data.get("next") or "").strip() or f"{space_base()}/submit"
+                # オープンリダイレクト防止: "/" 単発始まりの内部パスのみ許可する（"//host" や
+                # "https://..." のような外部遷移は弾く）。
+                if not next_path.startswith("/") or next_path.startswith("//") or ":" in next_path.split("/", 1)[0]:
+                    next_path = f"{space_base()}/submit"
+                with db() as conn:
+                    join_hash = pipeline_common.get_space_join_hash(conn, space_id)
+                if not join_hash:
+                    env_password = os.environ.get("JOIN_PASSWORD", "")
+                    join_hash = pipeline_common.hash_admin_token(env_password) if (space_id == pipeline_common.DEFAULT_SPACE_ID and env_password) else None
+                if join_hash and hmac.compare_digest(pipeline_common.hash_admin_token(password), join_hash):
+                    self.send_response(303)
+                    self.send_header("Location", next_path)
+                    self.send_header(
+                        "Set-Cookie",
+                        f"{JOIN_COOKIE_NAME}={join_hash}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
+                    )
+                    self.end_headers()
+                else:
+                    self.send_html(join_gate_page(next_path=next_path, error=True))
             elif path == "/submit":
+                if not self.join_authorized():
+                    self.send_html(join_gate_page(next_path=f"{space_base()}/submit"), 401)
+                    return
                 base = space_base()
                 data = self.read_form_or_json()
                 display_name = (data.get("display_name") or "").strip() or "匿名参加者"

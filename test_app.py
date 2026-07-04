@@ -991,5 +991,54 @@ class ResonanceAndQuestionsTest(unittest.TestCase):
         self.assertNotIn("この問いに応える", page2)  # 不明な問いは通常フォーム
 
 
+class JoinPasswordTest(unittest.TestCase):
+    """投稿パスワード（合言葉）のDAL層。未設定=誰でも投稿可の後方互換を含む。"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = app.DB_PATH
+        app.DB_PATH = Path(self._tmpdir.name) / "kizuki_tree.sqlite3"
+        app.init_db()
+
+    def tearDown(self):
+        app.DB_PATH = self._original_db_path
+        pipeline_common.clear_current_space()
+        self._tmpdir.cleanup()
+
+    def test_unset_join_password_returns_none(self):
+        with app.db() as conn:
+            self.assertIsNone(pipeline_common.get_space_join_hash(conn, pipeline_common.default_space_id()))
+
+    def test_set_and_verify_join_password_hash(self):
+        sid = pipeline_common.default_space_id()
+        with app.db() as conn:
+            pipeline_common.set_space_join_password(conn, sid, "ことのは")
+            h = pipeline_common.get_space_join_hash(conn, sid)
+        self.assertEqual(h, pipeline_common.hash_admin_token("ことのは"))
+        self.assertNotEqual(h, pipeline_common.hash_admin_token("ちがうことば"))
+
+    def test_clearing_join_password_reopens_submission(self):
+        sid = pipeline_common.default_space_id()
+        with app.db() as conn:
+            pipeline_common.set_space_join_password(conn, sid, "secret")
+            self.assertIsNotNone(pipeline_common.get_space_join_hash(conn, sid))
+            pipeline_common.set_space_join_password(conn, sid, "")
+            self.assertIsNone(pipeline_common.get_space_join_hash(conn, sid))
+
+    def test_join_password_is_per_space(self):
+        with app.db() as conn:
+            pipeline_common.create_space(conn, "other-uni", "他の宇宙")
+            pipeline_common.set_space_join_password(conn, "other-uni", "よそのことば")
+            self.assertIsNone(pipeline_common.get_space_join_hash(conn, pipeline_common.default_space_id()))
+            self.assertIsNotNone(pipeline_common.get_space_join_hash(conn, "other-uni"))
+
+    def test_join_gate_page_renders_form_and_error(self):
+        page = app.join_gate_page(next_path="/submit").decode("utf-8")
+        self.assertIn("合言葉", page)
+        self.assertIn('action="/join"', page)
+        error_page = app.join_gate_page(next_path="/submit", error=True).decode("utf-8")
+        self.assertIn("合言葉が違うようです", error_page)
+
+
 if __name__ == "__main__":
     unittest.main()
