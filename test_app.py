@@ -1040,5 +1040,210 @@ class JoinPasswordTest(unittest.TestCase):
         self.assertIn("合言葉が違うようです", error_page)
 
 
+class GomaSceneTest(unittest.TestCase):
+    """gomaシーン（気づきの御護摩）: scene解決・goma公開ページ・noby宇宙非影響・ライフサイクル・詳細のscene追従。"""
+
+    GOMA_WORLDVIEW = {
+        "scene": "goma",
+        "terms": {
+            "star": "護摩木", "constellation": "焔", "universe": "気づきの御護摩",
+            "nebula": "薪", "owner": "導き手", "content": "巻物",
+        },
+        "messages": {
+            "consent_prompt": "この気づきを御護摩にくべてもよいですか？",
+            "star_born": "あなたの護摩木が、火に入りました",
+            "in_constellation": "あなたの護摩木が「{constellation}」の焔につながりました",
+        },
+        "goma": {
+            "temple": "遍照寺 朝のお勤め",
+            "title": "気づきの御護摩",
+            "tagline": "あなたの気づきが、護摩木となって、誰かの明日を照らす。",
+            "cta": "今朝の気づきを、くべる",
+            "cta_note": "お勤めのあと、心に残ったひとことを。",
+            "feed_title": "炎のいま",
+            "question_title": "今朝の問い",
+            "question_note": "— 皆さんの護摩木から、炎が浮かびあがらせた問い",
+            "stats_label": "今朝の灯",
+            "okibi_title": "熾火 ── これまでにくべられた気づき",
+            "new_label": "いま、火に入りました",
+            "resonate_label": "この護摩木と響き合う",
+            "footer": "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。",
+        },
+    }
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = app.DB_PATH
+        app.DB_PATH = Path(self._tmpdir.name) / "kizuki_tree.sqlite3"
+        app.init_db()
+        with app.db() as conn:
+            pipeline_common.create_space(conn, "henjoji", "気づきの御護摩", self.GOMA_WORLDVIEW)
+
+    def tearDown(self):
+        app.DB_PATH = self._original_db_path
+        pipeline_common.clear_current_space()
+        self._tmpdir.cleanup()
+
+    def _enter_goma(self):
+        with app.db() as conn:
+            wv = pipeline_common.load_worldview_for_space(conn, "henjoji")
+        pipeline_common.set_current_space("henjoji", wv)
+
+    def _add_gomagi(self, rid, body, name="参加者", space_id="henjoji", approved_at=None, created_at=None):
+        ts = created_at or pipeline_common.now_iso()
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, approved_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (rid, "web", name, body, json.dumps(["未分類"], ensure_ascii=False),
+                 "approved", ts, approved_at, space_id, "insight", "universe"),
+            )
+
+    # --- ① scene解決 ---
+    def test_scene_defaults_to_cosmos_when_missing(self):
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        self.assertEqual(pipeline_common.worldview_scene(), "cosmos")
+
+    def test_scene_resolves_goma_from_space_worldview(self):
+        self._enter_goma()
+        self.assertEqual(pipeline_common.worldview_scene(), "goma")
+
+    def test_scene_unknown_value_falls_back_to_cosmos(self):
+        pipeline_common.set_current_space("x", {"scene": "hologram"})
+        self.assertEqual(pipeline_common.worldview_scene(), "cosmos")
+
+    # --- ② goma公開ページに護摩マークアップ ---
+    def test_goma_public_page_has_goma_markup(self):
+        self._add_gomagi("g1", "呼吸を数えるうち静かになった（テスト）", name="テスト明恵")
+        self._enter_goma()
+        page = app.goma_public_page().decode("utf-8")
+        self.assertIn("gomagi", page)                      # 護摩木
+        self.assertIn("今朝の気づきを、くべる", page)        # くべるCTA
+        self.assertIn("炎のいま", page)                     # フィード
+        self.assertIn("今朝の問い", page)                   # 問いカード
+        self.assertIn("今朝の灯", page)                     # 集合指標
+        self.assertIn("writing-mode: vertical-rl", page)   # 縦書き
+        self.assertIn("prefers-reduced-motion", page)      # アクセシビリティ
+        self.assertIn("テスト明恵", page)
+        # 星の語彙が混入しない
+        for word in ("星", "宇宙", "星座", "星雲", "惑星"):
+            self.assertNotIn(word, page)
+
+    def test_goma_public_page_marks_newest_as_just_lit(self):
+        self._add_gomagi("g-old", "以前の気づき（テスト）", approved_at=pipeline_common.now_iso())
+        self._add_gomagi("g-new", "いまの気づき（テスト）", approved_at=pipeline_common.now_iso())
+        self._enter_goma()
+        page = app.goma_public_page().decode("utf-8")
+        self.assertIn("いま、火に入りました", page)
+        self.assertIn('class="gomagi new"', page)
+
+    # --- ③ noby宇宙に護摩語彙が混入しない ---
+    def test_noby_public_page_free_of_goma_vocab(self):
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("n1", "web", "Aさん", "普通の気づきです", "[]", "approved",
+                 pipeline_common.now_iso(), "noby-universe", "insight", "universe"),
+            )
+        page = app.public_page().decode("utf-8")
+        for word in ("護摩", "遍照", "焔", "熾火", "くべる"):
+            self.assertNotIn(word, page)
+
+    def test_goma_stars_do_not_leak_into_noby_page(self):
+        self._add_gomagi("g-leak", "護摩側だけの気づき（テスト）", name="遍照テスト")
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        page = app.public_page().decode("utf-8")
+        self.assertNotIn("護摩側だけの気づき", page)
+        self.assertNotIn("遍照テスト", page)
+
+    # --- ④ ライフサイクル（固定clock・境界排他・UTC） ---
+    def test_lifecycle_6days23h_is_still_gomagi(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        approved = (now - timedelta(days=6, hours=23)).isoformat(timespec="seconds")
+        self.assertFalse(app.goma_is_okibi({"approved_at": approved, "created_at": approved}, now=now))
+
+    def test_lifecycle_exactly_7days_is_still_gomagi_boundary_exclusive(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        approved = (now - timedelta(days=7)).isoformat(timespec="seconds")
+        self.assertFalse(app.goma_is_okibi({"approved_at": approved, "created_at": approved}, now=now))
+
+    def test_lifecycle_7days1h_is_okibi(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        approved = (now - timedelta(days=7, hours=1)).isoformat(timespec="seconds")
+        self.assertTrue(app.goma_is_okibi({"approved_at": approved, "created_at": approved}, now=now))
+
+    def test_lifecycle_falls_back_to_created_at_when_approved_missing(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        created = (now - timedelta(days=8)).isoformat(timespec="seconds")
+        self.assertTrue(app.goma_is_okibi({"approved_at": None, "created_at": created}, now=now))
+
+    def test_okibi_rendered_in_band_with_link(self):
+        from datetime import datetime, timedelta, timezone
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat(timespec="seconds")
+        self._add_gomagi("g-okibi", "八日前の気づき（テスト）", approved_at=old_ts, created_at=old_ts)
+        self._enter_goma()
+        page = app.goma_public_page().decode("utf-8")
+        self.assertIn("熾火", page)
+        self.assertIn('class="okibi-dot"', page)
+        self.assertIn("/star/g-okibi", page)
+
+    # --- ⑤ /star/<id> のscene追従 ---
+    def test_star_detail_follows_goma_scene(self):
+        self._add_gomagi("g-detail", "詳細ページの気づき（テスト）", name="テスト道子")
+        self._enter_goma()
+        page = app.goma_star_page("g-detail").decode("utf-8")
+        self.assertIn("この護摩木と響き合う", page)
+        self.assertIn("テスト道子", page)
+        for word in ("星", "宇宙", "星座"):
+            self.assertNotIn(word, page)
+
+    def test_star_detail_cosmos_stays_star_ui(self):
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("n-detail", "web", "Bさん", "星側の気づき", "[]", "approved",
+                 pipeline_common.now_iso(), "noby-universe", "insight", "universe"),
+            )
+        page = app.star_page("n-detail").decode("utf-8")
+        self.assertIn("響き合う", page)
+        self.assertNotIn("護摩木", page)
+
+    def test_goma_star_page_hides_other_space_star(self):
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("n-other", "web", "Cさん", "noby側の気づき", "[]", "approved",
+                 pipeline_common.now_iso(), "noby-universe", "insight", "universe"),
+            )
+        self._enter_goma()
+        self.assertIsNone(app.goma_star_page("n-other"))  # 他スペースは404
+
+    # --- goma submit/joinゲート ---
+    def test_goma_submit_page_has_goma_wording(self):
+        self._enter_goma()
+        page = app.goma_submit_page().decode("utf-8")
+        self.assertIn("くべる", page)
+        self.assertIn("お勤めのあと、心に残ったひとことを。", page)
+        for word in ("星", "宇宙"):
+            self.assertNotIn(word, page)
+
+    def test_goma_join_gate_has_goma_wording(self):
+        self._enter_goma()
+        page = app.goma_join_gate_page(next_path="/s/henjoji/submit").decode("utf-8")
+        self.assertIn("合言葉", page)
+        self.assertIn("くべる", page)
+        self.assertNotIn("宇宙", page)
+
+
 if __name__ == "__main__":
     unittest.main()

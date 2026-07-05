@@ -335,6 +335,17 @@ def worldview_cta() -> dict:
     }
 
 
+def worldview_scene() -> str:
+    """現在の宇宙の描画シーン。未指定・不明値は既定の cosmos（星の宇宙）。"""
+    scene = str(current_worldview().get("scene") or "cosmos")
+    return scene if scene == "goma" else "cosmos"
+
+
+def worldview_goma() -> dict:
+    """goma シーン専用の文言・テーマ辞書（worldview_json の "goma" キー）。"""
+    return dict(current_worldview().get("goma", {}) or {})
+
+
 def table_columns(conn, table: str) -> set[str]:
     if DATABASE_URL:
         cur = conn.execute(

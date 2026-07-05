@@ -27,7 +27,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -2076,6 +2076,622 @@ def is_admin_path(path: str) -> bool:
     )
 
 
+# ============================================================================
+# goma シーン（気づきの御護摩）— 承認モック準拠のレンダラー群。
+# 星シーンの既存関数（public_page / cosmos_page / star_page / submit_page / layout）は
+# 一切変更せず、ルートディスパッチ側（do_GET/do_POST）で scene 分岐する。
+# ============================================================================
+
+GOMA_OKIBI_THRESHOLD_DAYS = 7
+
+
+def _goma_now() -> datetime:
+    """ライフサイクル判定用の「いま」。テストで固定できるよう関数として切り出す（UTC統一）。"""
+    return datetime.now(timezone.utc)
+
+
+def _goma_parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def goma_is_okibi(row, now: datetime | None = None) -> bool:
+    """approved_at（無ければ created_at）から7*24h超過で「熾火」扱い。境界は排他（超過のみ真）。"""
+    now = now or _goma_now()
+    basis = _goma_parse_dt(row_get(row, "approved_at")) or _goma_parse_dt(row_get(row, "created_at"))
+    if basis is None:
+        return False
+    return (now - basis) > timedelta(hours=24 * GOMA_OKIBI_THRESHOLD_DAYS)
+
+
+GOMA_CSS = """
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    color: #e8dfc8;
+    background: linear-gradient(180deg,
+      #070a18 0%,
+      #0d1230 38%,
+      #1c1c42 62%,
+      #3a2547 80%,
+      #5c3140 92%,
+      #7c4038 100%);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  a { color: inherit; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 40px 24px 80px; position: relative; }
+
+  header { text-align: center; margin-bottom: 8px; }
+  .temple { font-size: 13px; letter-spacing: 0.5em; color: #b9a06a; margin-bottom: 14px; }
+  .temple::before, .temple::after { content: "─"; color: rgba(185,160,106,0.4); margin: 0 12px; }
+  h1 { font-size: 40px; font-weight: 600; letter-spacing: 0.24em; color: #f2e9d4; text-shadow: 0 0 30px rgba(255,150,60,0.25); }
+  .tagline { margin-top: 14px; font-size: 14px; letter-spacing: 0.22em; color: #cbb894; }
+  .date { margin-top: 10px; font-size: 12px; letter-spacing: 0.3em; color: #8d84a3; }
+
+  .hero { position: relative; height: 520px; margin-top: 10px; }
+
+  .henjo {
+    position: absolute; left: 50%; top: 46%; width: 900px; height: 900px;
+    transform: translate(-50%, -50%);
+    background:
+      repeating-conic-gradient(from -90deg,
+        rgba(255,200,120,0.05) 0deg 1.2deg,
+        transparent 1.2deg 12deg);
+    -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,0.9) 0%, transparent 62%);
+    mask-image: radial-gradient(circle, rgba(0,0,0,0.9) 0%, transparent 62%);
+    animation: henjo-breathe 7s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes henjo-breathe { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+  .glow {
+    position: absolute; left: 50%; top: 42%; width: 560px; height: 560px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(255,140,50,0.28) 0%, rgba(255,100,40,0.10) 38%, transparent 68%);
+    animation: henjo-breathe 5s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .flame-area { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); width: 220px; height: 300px; }
+  .tongue {
+    position: absolute; bottom: 0; left: 50%;
+    border-radius: 50% 50% 42% 42% / 72% 72% 30% 30%;
+    transform-origin: 50% 100%;
+  }
+  .t1 { width: 150px; height: 250px; margin-left: -75px;
+        background: radial-gradient(ellipse at 50% 85%, #ff7a1e 0%, #e6420e 55%, rgba(160,30,10,0) 78%);
+        filter: blur(3px); animation: flick 2.3s ease-in-out infinite alternate; }
+  .t2 { width: 100px; height: 195px; margin-left: -50px;
+        background: radial-gradient(ellipse at 50% 88%, #ffb43a 0%, #ff7a1e 60%, rgba(230,80,20,0) 82%);
+        filter: blur(2px); animation: flick 1.7s ease-in-out infinite alternate-reverse; }
+  .t3 { width: 54px; height: 130px; margin-left: -27px;
+        background: radial-gradient(ellipse at 50% 90%, #fff3c8 0%, #ffd056 55%, rgba(255,170,60,0) 85%);
+        filter: blur(1px); animation: flick 1.2s ease-in-out infinite alternate; }
+  @keyframes flick {
+    0%   { transform: scaleY(1) scaleX(1) skewX(0deg); }
+    30%  { transform: scaleY(1.06) scaleX(0.96) skewX(-2.4deg); }
+    60%  { transform: scaleY(0.94) scaleX(1.05) skewX(2deg); }
+    100% { transform: scaleY(1.09) scaleX(0.97) skewX(-1.2deg); }
+  }
+
+  .ember { position: absolute; bottom: 190px; width: 4px; height: 4px; border-radius: 50%;
+           background: #ffca6a; box-shadow: 0 0 8px 2px rgba(255,170,70,0.8);
+           opacity: 0; animation: rise linear infinite; }
+  @keyframes rise {
+    0%   { transform: translate(0, 0) scale(1); opacity: 0; }
+    12%  { opacity: 0.95; }
+    100% { transform: translate(var(--dx, 20px), -370px) scale(0.25); opacity: 0; }
+  }
+
+  .altar {
+    position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%);
+    width: 320px; height: 74px;
+    background: linear-gradient(180deg, #3d2a1c 0%, #241610 60%, #150c08 100%);
+    border-radius: 10px 10px 22px 22px;
+    box-shadow: 0 -6px 40px rgba(255,120,40,0.35), inset 0 3px 0 rgba(255,190,110,0.22);
+  }
+  .altar::before { content: ""; position: absolute; top: -12px; left: 18px; right: 18px; height: 16px;
+    background: linear-gradient(180deg, #6b4a2e, #3d2a1c); border-radius: 8px; }
+  .altar-base { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+    width: 430px; height: 26px; background: linear-gradient(180deg, #1c1210, #0d0806); border-radius: 6px; }
+
+  .gomagi-row {
+    position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: flex-end; gap: 26px; justify-content: center;
+    flex-wrap: wrap; max-width: 100%;
+  }
+  .gomagi {
+    writing-mode: vertical-rl; text-orientation: upright;
+    width: 62px; height: 268px; padding: 18px 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    background:
+      repeating-linear-gradient(90deg, rgba(0,0,0,0.07) 0 2px, transparent 2px 7px),
+      linear-gradient(175deg, #a8845c 0%, #8a6a46 45%, #6d5136 100%);
+    border-radius: 4px 4px 6px 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,235,200,0.12);
+    color: #241505;
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  .gomagi:hover { transform: translateY(-10px); box-shadow: 0 14px 26px rgba(0,0,0,0.55), 0 0 24px rgba(255,170,80,0.35); }
+  .gomagi .kizuki { font-size: 14.5px; font-weight: 600; letter-spacing: 0.14em; line-height: 1.55; }
+  .gomagi .who { font-size: 10px; letter-spacing: 0.2em; color: rgba(36,21,5,0.72); }
+  .r-l2 { transform: rotate(-3.4deg); } .r-l1 { transform: rotate(-1.6deg); }
+  .r-r1 { transform: rotate(1.8deg); }  .r-r2 { transform: rotate(3.6deg); }
+  .r-l2:hover { transform: rotate(-3.4deg) translateY(-10px); }
+  .r-l1:hover { transform: rotate(-1.6deg) translateY(-10px); }
+  .r-r1:hover { transform: rotate(1.8deg) translateY(-10px); }
+  .r-r2:hover { transform: rotate(3.6deg) translateY(-10px); }
+
+  .gomagi.new {
+    background:
+      repeating-linear-gradient(90deg, rgba(0,0,0,0.06) 0 2px, transparent 2px 7px),
+      linear-gradient(175deg, #c19a68 0%, #a37e52 45%, #86643e 100%);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 26px 4px rgba(255,175,80,0.55), inset 0 0 0 1px rgba(255,220,150,0.5);
+    animation: newglow 2.6s ease-in-out infinite;
+  }
+  @keyframes newglow {
+    0%,100% { box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 20px 2px rgba(255,175,80,0.45), inset 0 0 0 1px rgba(255,220,150,0.5); }
+    50%     { box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 34px 8px rgba(255,185,90,0.7),  inset 0 0 0 1px rgba(255,230,170,0.7); }
+  }
+  .new-label {
+    position: absolute; bottom: 286px; left: 50%; transform: translateX(-50%);
+    white-space: nowrap; font-size: 11px; letter-spacing: 0.28em; color: #ffcf8a;
+    text-shadow: 0 0 12px rgba(255,160,60,0.8);
+  }
+  .gomagi-wrap { position: relative; }
+
+  .stats { display: flex; justify-content: center; gap: 56px; margin: 34px 0 46px; flex-wrap: wrap; }
+  .stat { text-align: center; }
+  .stat .num { font-size: 26px; letter-spacing: 0.14em; color: #f3c76a; text-shadow: 0 0 16px rgba(255,170,60,0.4); }
+  .stat .label { margin-top: 6px; font-size: 11.5px; letter-spacing: 0.3em; color: #9a90ad; }
+
+  .lower { display: grid; grid-template-columns: 1.15fr 1fr; gap: 26px; align-items: start; }
+  .card {
+    background: rgba(10,12,28,0.55); border: 1px solid rgba(185,160,106,0.22);
+    border-radius: 6px; padding: 26px 28px; backdrop-filter: blur(4px);
+  }
+  .card h2 { font-size: 13px; letter-spacing: 0.42em; color: #b9a06a; font-weight: 500; margin-bottom: 18px; }
+  .question { font-size: 21px; line-height: 2; letter-spacing: 0.1em; color: #f0e6cf; }
+  .question-note { margin-top: 16px; font-size: 12px; letter-spacing: 0.14em; color: #8d84a3; }
+  .answer-link { display: inline-block; margin-top: 18px; font-size: 13px; letter-spacing: 0.2em;
+    color: #f3c76a; border-bottom: 1px solid rgba(243,199,106,0.5); padding-bottom: 3px; text-decoration: none; }
+
+  .feed-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid rgba(185,160,106,0.12);
+    font-size: 13.5px; letter-spacing: 0.08em; line-height: 1.9; color: #d9cfb6; }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-item .mark { color: #ff9a3e; flex-shrink: 0; }
+  .feed-item .time { margin-left: auto; font-size: 11px; color: #7c7391; flex-shrink: 0; align-self: center; letter-spacing: 0.1em; }
+
+  .cta-area { text-align: center; margin-top: 64px; }
+  .cta {
+    display: inline-block; font-family: inherit; cursor: pointer;
+    font-size: 18px; letter-spacing: 0.34em; color: #1c0e04; font-weight: 600;
+    padding: 20px 64px 20px 70px; border: none; border-radius: 4px;
+    background: linear-gradient(160deg, #f6cf7e 0%, #e8a44b 55%, #d18434 100%);
+    box-shadow: 0 0 36px rgba(255,170,70,0.45), inset 0 1px 0 rgba(255,255,255,0.55);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    text-decoration: none;
+  }
+  .cta:hover { transform: translateY(-3px); box-shadow: 0 0 52px rgba(255,180,80,0.65), inset 0 1px 0 rgba(255,255,255,0.55); }
+  .cta-note { margin-top: 18px; font-size: 12px; letter-spacing: 0.24em; color: #9a90ad; }
+
+  footer { margin-top: 70px; text-align: center; font-size: 11px; letter-spacing: 0.3em; color: #665e7d; }
+
+  /* ── 熾火帯（7日超の護摩木のアーカイブ） ── */
+  .okibi-section { margin-top: 56px; text-align: center; }
+  .okibi-section h2 { font-size: 13px; letter-spacing: 0.3em; color: #8d7a5a; font-weight: 500; margin-bottom: 20px; }
+  .okibi-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+  .okibi-dot { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px;
+    background: rgba(255,150,60,0.06); border: 1px solid rgba(255,150,60,0.18);
+    color: #c9b48a; font-size: 12px; letter-spacing: 0.08em; text-decoration: none;
+    transition: background 0.2s ease, border-color 0.2s ease; }
+  .okibi-dot::before { content: "◦"; color: #ff9a3e; }
+  .okibi-dot:hover { background: rgba(255,150,60,0.14); border-color: rgba(255,150,60,0.4); }
+
+  /* ── 詳細ページ（護摩木） ── */
+  .goma-detail { max-width: 720px; margin: 0 auto; padding: 60px 24px 80px; }
+  .goma-detail .back { font-size: 12px; letter-spacing: 0.1em; color: #b9a06a; text-decoration: none; }
+  .goma-detail .back:hover { color: #f3c76a; }
+  .goma-detail article.gomagi-single {
+    margin: 28px 0; padding: 32px 28px; border-radius: 8px;
+    background: rgba(10,12,28,0.55); border: 1px solid rgba(185,160,106,0.28);
+  }
+  .goma-detail .who { font-size: 12px; letter-spacing: 0.2em; color: #b9a06a; margin-bottom: 14px; }
+  .goma-detail .kizuki-body { font-size: 19px; line-height: 2.1; letter-spacing: 0.06em; color: #f0e6cf; }
+  .resonance-goma { margin: 34px 0; }
+  .resonance-goma h2 { font-size: 13px; letter-spacing: 0.3em; color: #b9a06a; font-weight: 500; margin-bottom: 16px; }
+  .resonance-list { list-style: none; display: grid; gap: 10px; }
+  .resonance-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(185,160,106,0.18);
+    border-radius: 8px; padding: 14px 16px; }
+  .resonance-item a { display: block; text-decoration: none; color: inherit; }
+  .resonance-who { display: block; color: #f3c76a; font-size: 13px; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .resonance-body { display: block; font-size: 13.5px; color: #d9cfb6; line-height: 1.8; }
+  .resonance-reason { margin: 8px 0 0; font-size: 12px; color: #9a90ad; }
+
+  /* ── 合言葉ゲート・投稿フォーム（goma版） ── */
+  .goma-form { max-width: 560px; margin: 60px auto; padding: 32px 28px; border-radius: 8px;
+    background: rgba(10,12,28,0.55); border: 1px solid rgba(185,160,106,0.28); }
+  .goma-form h1 { font-size: 24px; margin-bottom: 20px; }
+  .goma-form label { display: block; font-size: 13px; letter-spacing: 0.08em; color: #cbb894; margin-bottom: 8px; }
+  .goma-form input, .goma-form textarea {
+    width: 100%; font-family: inherit; font-size: 15px; color: #e8dfc8;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(185,160,106,0.3);
+    border-radius: 4px; padding: 12px 14px; margin-bottom: 18px;
+  }
+  .goma-form input:focus, .goma-form textarea:focus { outline: none; border-color: #f3c76a; }
+  .goma-form button.cta { width: 100%; padding: 16px; letter-spacing: 0.2em; }
+  .goma-notice { font-size: 12.5px; color: #9a90ad; line-height: 1.8; margin-bottom: 18px; }
+  .goma-error { color: #e08585; font-size: 13px; margin-bottom: 14px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 720px) {
+    .lower { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .hero { height: auto; min-height: 460px; padding-bottom: 40px; }
+    .flame-area { bottom: 100px; }
+    .altar { bottom: 40px; }
+    .altar-base { bottom: 18px; }
+    .gomagi-row { position: relative; bottom: auto; margin-top: 24px;
+      overflow-x: auto; flex-wrap: nowrap; justify-content: flex-start; padding: 0 4px 8px; }
+    .gomagi { flex-shrink: 0; }
+    .new-label { position: static; display: block; margin-bottom: 8px; }
+    .gomagi-wrap { display: flex; flex-direction: column; align-items: center; }
+    h1 { font-size: 28px; }
+    .stats { gap: 28px; }
+  }
+"""
+
+
+def goma_layout(title: str, body_html: str) -> bytes:
+    """gomaシーン専用のページシェル（既存 layout() とは独立。星UIのCSS/構造は使わない）。"""
+    temple = pipeline_common.worldview_goma().get("temple", "遍照寺 朝のお勤め")
+    page = f'''<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{esc(title)} — {esc(temple)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;800&display=swap" rel="stylesheet">
+<style>{GOMA_CSS}</style>
+</head>
+<body>
+{body_html}
+</body>
+</html>'''
+    return page.encode("utf-8")
+
+
+def _goma_rotation_class(index: int) -> str:
+    return ["r-l2", "r-l1", "", "r-r1", "r-r2"][index % 5]
+
+
+def goma_public_page() -> bytes:
+    """公開ページ: 護摩壇・縦書き護摩木・炎のいま・今朝の問い・今朝の灯・くべるCTA。"""
+    gw = pipeline_common.worldview_goma()
+    base = space_base()
+    all_rows = rows("approved")
+    now = _goma_now()
+    burning = [r for r in all_rows if not goma_is_okibi(r, now)]
+    okibi = [r for r in all_rows if goma_is_okibi(r, now)]
+    # 直近にくべられたもの（burningの中で最新1本）が「いま、火に入りました」
+    burning_sorted = sorted(burning, key=lambda r: row_get(r, "approved_at") or row_get(r, "created_at") or "", reverse=True)
+    newest_id = burning_sorted[0]["id"] if burning_sorted else None
+
+    with db() as conn:
+        relay = pipeline_common.relay_feed(conn, limit=6)
+        questions = pipeline_common.active_questions(conn, limit=3)
+
+    gomagi_items = []
+    shown = burning_sorted[:6] if burning_sorted else []
+    for i, r in enumerate(shown):
+        is_new = r["id"] == newest_id
+        rot = "" if is_new else _goma_rotation_class(i)
+        classes = "gomagi" + (" new" if is_new else (f" {rot}" if rot else ""))
+        created = (row_get(r, "approved_at") or row_get(r, "created_at") or "")[:10]
+        gomagi_html = (
+            f'<a class="{classes}" href="{base}/star/{esc(r["id"])}">'
+            f'<div class="kizuki">{esc(r["body"])}</div>'
+            f'<div class="who">{esc(r["display_name"])}　{esc(created)}</div></a>'
+        )
+        if is_new:
+            gomagi_html = (
+                '<div class="gomagi-wrap"><div class="new-label">いま、火に入りました</div>'
+                f'{gomagi_html}</div>'
+            )
+        gomagi_items.append(gomagi_html)
+
+    gomagi_row = (
+        f'<div class="gomagi-row">{"".join(gomagi_items)}</div>' if gomagi_items
+        else '<div class="gomagi-row"><p class="small" style="color:#9a90ad;letter-spacing:.1em">夜明け前が、いちばん暗い。最初の気づきを、あなたがくべてください。</p></div>'
+    )
+
+    voice_count = len(all_rows)
+    stats_html = f'''
+    <section class="stats">
+      <div class="stat"><div class="num">{len(burning)}本</div><div class="label">{esc(gw.get("stats_label", "今朝の灯"))}</div></div>
+      <div class="stat"><div class="num">{voice_count}人</div><div class="label">この炎に照らされた人</div></div>
+      <div class="stat"><div class="num">{len(okibi)}本</div><div class="label">熾火として残る気づき</div></div>
+    </section>'''
+
+    question_card = ""
+    if questions:
+        q = questions[0]
+        question_card = f'''
+        <div class="card">
+          <h2>{esc(gw.get("question_title", "今朝の問い"))}</h2>
+          <div class="question">{esc(q["question"])}</div>
+          <div class="question-note">{esc(gw.get("question_note", "— 皆さんの護摩木から、炎が浮かびあがらせた問い"))}</div>
+          <a class="answer-link" href="{base}/submit?question_id={esc(q["id"])}">この問いに、護摩木で応える</a>
+        </div>'''
+    else:
+        question_card = f'''
+        <div class="card">
+          <h2>{esc(gw.get("question_title", "今朝の問い"))}</h2>
+          <div class="question">まだ問いは浮かんでいません。</div>
+          <div class="question-note">{esc(gw.get("question_note", "— 皆さんの護摩木から、炎が浮かびあがらせた問い"))}</div>
+        </div>'''
+
+    feed_items = "".join(
+        f'<div class="feed-item"><span class="mark">◉</span>{esc(_goma_relay_line(ev))}<span class="time">{esc(_goma_relay_time(ev))}</span></div>'
+        for ev in relay
+    ) or '<div class="feed-item"><span class="mark">◉</span>まだ動きはありません。</div>'
+    feed_card = f'''
+        <div class="card">
+          <h2>{esc(gw.get("feed_title", "炎のいま"))}</h2>
+          {feed_items}
+        </div>'''
+
+    okibi_section = ""
+    if okibi:
+        okibi_dots = "".join(
+            f'<a class="okibi-dot" href="{base}/star/{esc(r["id"])}">{esc(clip_text(r["body"], 14))}</a>'
+            for r in okibi
+        )
+        okibi_section = f'''
+        <section class="okibi-section">
+          <h2>{esc(gw.get("okibi_title", "熾火 ── これまでにくべられた気づき"))}</h2>
+          <div class="okibi-row">{okibi_dots}</div>
+        </section>'''
+
+    embers = "".join(
+        f'<span class="ember" style="left:{l}%; --dx:{dx}px; animation-duration:{dur}s; animation-delay:{delay}s;"></span>'
+        for l, dx, dur, delay in [
+            (46, -30, 4.2, 0), (54, 36, 5.6, 1.1), (50, -12, 4.8, 2.3),
+            (42, 24, 6.3, 0.7), (58, -40, 5.1, 3.2), (48, 44, 6.8, 1.9),
+        ]
+    )
+
+    body = f'''
+<div class="page">
+  <header>
+    <div class="temple">{esc(gw.get("temple", "遍照寺 朝のお勤め"))}</div>
+    <h1>{esc(gw.get("title", "気づきの御護摩"))}</h1>
+    <div class="tagline">{esc(gw.get("tagline", "あなたの気づきが、護摩木となって、誰かの明日を照らす。"))}</div>
+  </header>
+
+  <section class="hero">
+    <div class="henjo"></div>
+    <div class="glow"></div>
+    <div class="flame-area">
+      <div class="tongue t1"></div>
+      <div class="tongue t2"></div>
+      <div class="tongue t3"></div>
+      {embers}
+    </div>
+    <div class="altar-base"></div>
+    <div class="altar"></div>
+    {gomagi_row}
+  </section>
+
+  {stats_html}
+
+  <section class="lower">
+    {question_card}
+    {feed_card}
+  </section>
+
+  {okibi_section}
+
+  <div class="cta-area">
+    <a class="cta" href="{base}/submit">{esc(gw.get("cta", "今朝の気づきを、くべる"))}</a>
+    <div class="cta-note">{esc(gw.get("cta_note", "お勤めのあと、心に残ったひとことを。"))}</div>
+  </div>
+
+  <footer>{esc(gw.get("footer", "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。"))}</footer>
+</div>'''
+    return goma_layout(gw.get("title", "気づきの御護摩"), body)
+
+
+def _goma_relay_line(ev: dict) -> str:
+    kind = ev.get("kind")
+    who = ev.get("star_who") or ""
+    detail = ev.get("detail") or {}
+    cname = ev.get("constellation_name") or "焔"
+    if kind == "constellation_born":
+        return f'「{cname}」の焔が立ちのぼりました'
+    if kind == "constellation_grew":
+        return f'「{cname}」の焔がひろがっています'
+    if kind == "link_woven":
+        return "光の糸が新しく結ばれました"
+    if kind == "question_born":
+        return "護摩木々から問いが生まれました"
+    if kind == "question_answered":
+        return f'{who}さんの護摩木が、問いに応えました' if who else "問いに応えた護摩木がありました"
+    if who:
+        return f'{who}さんの護摩木が、火に入りました'
+    return cname
+
+
+def _goma_relay_time(ev: dict) -> str:
+    dt = _goma_parse_dt(ev.get("created_at"))
+    if not dt:
+        return ""
+    delta = _goma_now() - dt
+    if delta < timedelta(hours=6):
+        return "たった今"
+    if delta < timedelta(days=1):
+        return "今朝"
+    return "昨日"
+
+
+def goma_star_page(star_id: str, born: bool = False) -> bytes | None:
+    """護摩木の詳細ページ（goma世界観）。非公開・他スペースは None（404扱い）。"""
+    gw = pipeline_common.worldview_goma()
+    base = space_base()
+    sid = pipeline_common.current_space_id()
+    with db() as conn:
+        row = conn.execute(
+            f"SELECT * FROM reflections WHERE id=? AND space_id=? AND {pipeline_common.VISIBLE_STAR_WHERE}",
+            (star_id, sid),
+        ).fetchone()
+        if not row:
+            return None
+        links = pipeline_common.star_links_for(conn, star_id, space_id=sid)
+        name_rows = {}
+        for l in links:
+            other_id = l["star_b"] if l["star_a"] == star_id else l["star_a"]
+            other = conn.execute(
+                f"SELECT id, display_name, body FROM reflections WHERE id=? AND space_id=? AND {pipeline_common.VISIBLE_STAR_WHERE}",
+                (other_id, sid),
+            ).fetchone()
+            if other:
+                name_rows[other_id] = other
+
+    born_banner = ""
+    if born:
+        born_banner = (
+            f'<div class="card" style="margin-bottom:24px;border-color:#f3c76a">'
+            f'{esc(pipeline_common.worldview_message("star_born", "あなたの護摩木が、火に入りました"))}</div>'
+        )
+
+    if links:
+        items = []
+        for l in links:
+            other_id = l["star_b"] if l["star_a"] == star_id else l["star_a"]
+            other = name_rows.get(other_id)
+            if not other:
+                continue
+            reason_html = f'<p class="resonance-reason">── {esc(l["reason"])}</p>' if l["reason"] else ""
+            items.append(
+                f'<li class="resonance-item"><a href="{base}/star/{esc(other["id"])}">'
+                f'<span class="resonance-who">{esc(other["display_name"])}</span>'
+                f'<span class="resonance-body">{esc(clip_text(other["body"], 64))}</span></a>{reason_html}</li>'
+            )
+        resonance_block = (
+            f'<section class="resonance-goma"><h2>{esc(gw.get("resonate_label", "この護摩木と響き合う"))}</h2>'
+            f'<ul class="resonance-list">{"".join(items)}</ul></section>'
+        ) if items else ""
+    else:
+        resonance_block = (
+            f'<section class="resonance-goma"><h2>{esc(gw.get("resonate_label", "この護摩木と響き合う"))}</h2>'
+            f'<p class="small" style="color:#9a90ad">まだ光の糸は結ばれていません。</p></section>'
+        )
+
+    created = (row_get(row, "approved_at") or row_get(row, "created_at") or "")[:10]
+    body = f'''
+<div class="goma-detail">
+  <a class="back" href="{base}/">← すべての護摩木にもどる</a>
+  {born_banner}
+  <article class="gomagi-single">
+    <div class="who">{esc(row["display_name"])}　{esc(created)}</div>
+    <div class="kizuki-body">{esc(row["body"])}</div>
+  </article>
+  {resonance_block}
+  <div class="cta-area">
+    <a class="cta" href="{base}/submit?parent_id={esc(row["id"])}">この護摩木に、声を寄せる</a>
+  </div>
+</div>'''
+    return goma_layout(f'{row["display_name"]}の護摩木', body)
+
+
+def goma_submit_page(parent_id: str = "", question_id: str = "", error: str = "") -> bytes:
+    """goma版の投稿フォーム。"""
+    gw = pipeline_common.worldview_goma()
+    base = space_base()
+    question_block = ""
+    title = gw.get("cta", "今朝の気づきを、くべる")
+    if question_id:
+        with db() as conn:
+            q = pipeline_common.get_question(conn, question_id)
+        if q and q["status"] == "active":
+            question_block = (
+                f'<div class="card notice goma-notice" style="border:1px solid rgba(185,160,106,0.28);border-radius:4px;padding:18px 20px;margin-bottom:18px">'
+                f'<div style="color:#b9a06a;font-size:12px;letter-spacing:.2em;margin-bottom:8px">{esc(gw.get("question_title", "今朝の問い"))}</div>'
+                f'<div class="question" style="font-size:16px">{esc(q["question"])}</div></div>'
+            )
+        else:
+            question_id = ""
+    error_block = ""
+    if error == "empty":
+        error_block = '<p class="goma-error">気づきの言葉を入れてください。</p>'
+    elif error == "toolong":
+        error_block = '<p class="goma-error">少し長すぎるようです。短くまとめてお試しください。</p>'
+    reply_note = '<p class="goma-notice">選んだ護摩木への返信としてくべられます。</p>' if parent_id else ""
+    body = f'''
+<div class="page">
+  <header>
+    <div class="temple">{esc(gw.get("temple", "遍照寺 朝のお勤め"))}</div>
+    <h1 style="font-size:26px">{esc(title)}</h1>
+  </header>
+  <div class="goma-form">
+    {question_block}
+    <p class="goma-notice">{esc(gw.get("cta_note", "お勤めのあと、心に残ったひとことを。"))}</p>
+    {error_block}
+    <form method="post" action="{base}/submit">
+      <input type="hidden" name="parent_id" value="{esc(parent_id)}">
+      <input type="hidden" name="question_id" value="{esc(question_id)}">
+      {reply_note}
+      <label>お名前（省略すると匿名になります）</label>
+      <input name="display_name" placeholder="例：明恵">
+      <label>今朝の気づき</label>
+      <textarea name="body" rows="5" placeholder="いま心に残っていることを、そのままの言葉で" required></textarea>
+      <button class="cta" type="submit">くべる</button>
+    </form>
+  </div>
+</div>'''
+    return goma_layout(title, body)
+
+
+def goma_join_gate_page(next_path: str = "", error: bool = False) -> bytes:
+    """goma版の合言葉ゲート（星宇宙の join_gate_page と同等の goma文言版）。"""
+    gw = pipeline_common.worldview_goma()
+    base = space_base()
+    error_html = '<p class="goma-error">合言葉が違うようです。もう一度お試しください。</p>' if error else ""
+    body = f'''
+<div class="page">
+  <header>
+    <div class="temple">{esc(gw.get("temple", "遍照寺 朝のお勤め"))}</div>
+    <h1 style="font-size:24px">合言葉</h1>
+  </header>
+  <div class="goma-form">
+    <p class="goma-notice">この御護摩に気づきをくべるには、合言葉が必要です。お申し込みいただいた方にお伝えしています。</p>
+    {error_html}
+    <form method="post" action="{base}/join">
+      <input type="hidden" name="next" value="{esc(next_path)}">
+      <label>合言葉</label>
+      <input type="password" name="password" autofocus required>
+      <button class="cta" type="submit">すすむ</button>
+    </form>
+  </div>
+</div>'''
+    return goma_layout("合言葉", body)
+
+
 def resolve_space_path(path: str) -> tuple[str, str]:
     """URLパスから (space_id, ルートパス) を取り出す。
     /s/<slug>/... → (slug, /...)。/s/ が無ければデフォルト宇宙(noby)でパスはそのまま。"""
@@ -2294,7 +2910,12 @@ class Handler(BaseHTTPRequestHandler):
             pipeline_common.set_current_space(space_id, wv)
             if is_admin_path(route_path) and not self.require_admin():
                 return
-            if route_path == "/":
+            scene = pipeline_common.worldview_scene()
+            if route_path in ("/", "/cosmos", "/questions") and scene == "goma":
+                # gomaシーンでは / /cosmos /questions はすべて同じ護摩公開ビュー
+                # （「今朝の問い」カードで代替。星シーンの専用ページは持たない）。
+                self.send_html(goma_public_page())
+            elif route_path == "/":
                 self.send_html(public_page(theme=qs.get("theme", [""])[0]))
             elif route_path == "/cosmos":
                 self.send_html(cosmos_page())
@@ -2302,16 +2923,36 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(questions_page())
             elif route_path == "/submit":
                 if not self.join_authorized():
-                    self.send_html(join_gate_page(next_path=route_path + (f"?{parsed.query}" if parsed.query else "")))
+                    next_path = route_path + (f"?{parsed.query}" if parsed.query else "")
+                    if scene == "goma":
+                        self.send_html(goma_join_gate_page(next_path=next_path))
+                    else:
+                        self.send_html(join_gate_page(next_path=next_path))
                     return
-                self.send_html(submit_page(qs.get("parent_id", [""])[0], qs.get("question_id", [""])[0]))
+                parent_id = qs.get("parent_id", [""])[0]
+                question_id = qs.get("question_id", [""])[0]
+                if scene == "goma":
+                    error = qs.get("error", [""])[0]
+                    self.send_html(goma_submit_page(parent_id, question_id, error=error))
+                else:
+                    self.send_html(submit_page(parent_id, question_id))
             elif route_path == "/join":
-                self.send_html(join_gate_page(next_path=qs.get("next", [""])[0]))
+                next_path = qs.get("next", [""])[0]
+                if scene == "goma":
+                    self.send_html(goma_join_gate_page(next_path=next_path))
+                else:
+                    self.send_html(join_gate_page(next_path=next_path))
             elif route_path.startswith("/star/"):
                 star_id = route_path.removeprefix("/star/").strip("/")
-                page = star_page(star_id, born=bool(qs.get("born")))
+                born = bool(qs.get("born"))
+                if scene == "goma":
+                    page = goma_star_page(star_id, born=born)
+                    not_found_page = goma_layout("404", '<div class="page"><h1>404</h1><p>この護摩木は見つかりませんでした。</p></div>')
+                else:
+                    page = star_page(star_id, born=born)
+                    not_found_page = layout("404", "<h1>404</h1><p>この星は見つかりませんでした。</p>")
                 if page is None:
-                    self.send_html(layout("404", f"<h1>404</h1><p>この星は見つかりませんでした。</p>"), 404)
+                    self.send_html(not_found_page, 404)
                 else:
                     self.send_html(page)
             elif route_path == "/admin":
@@ -2418,10 +3059,16 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     self.end_headers()
                 else:
-                    self.send_html(join_gate_page(next_path=next_path, error=True))
+                    if pipeline_common.worldview_scene() == "goma":
+                        self.send_html(goma_join_gate_page(next_path=next_path, error=True))
+                    else:
+                        self.send_html(join_gate_page(next_path=next_path, error=True))
             elif path == "/submit":
                 if not self.join_authorized():
-                    self.send_html(join_gate_page(next_path=f"{space_base()}/submit"), 401)
+                    if pipeline_common.worldview_scene() == "goma":
+                        self.send_html(goma_join_gate_page(next_path=f"{space_base()}/submit"), 401)
+                    else:
+                        self.send_html(join_gate_page(next_path=f"{space_base()}/submit"), 401)
                     return
                 base = space_base()
                 data = self.read_form_or_json()

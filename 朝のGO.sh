@@ -47,3 +47,20 @@ echo "STEP 5: 本番ページの確認"
 curl -s https://kizuki-universe.onrender.com/ | grep -o "星々から生まれた問い\|響き合っています\|光の糸" | sort | uniq -c || true
 echo ""
 echo "✦ 完了。 https://kizuki-universe.onrender.com/ を開いて、宇宙を旅してください。"
+
+# 6) 遍照寺「気づきの御護摩」空間の本番セットアップ（冪等・2026-07-05追加）
+echo ""
+echo "STEP 6: 気づきの御護摩（/s/henjoji/）の本番セットアップ"
+if ! python3 -c "import psycopg2" 2>/dev/null; then
+  echo "  psycopg2 が無いため導入します（本番Postgres接続に必要）"
+  pip3 install --quiet psycopg2-binary
+fi
+if [ -z "${HENJOJI_JOIN_PASSWORD:-}" ]; then
+  echo "  護摩空間の合言葉（投稿用パスワード）を入力してください。"
+  echo "  ※ローカルのテスト値は使わないこと。メンバーに伝える本番の合言葉です。"
+  read -r -s -p "  合言葉: " HENJOJI_JOIN_PASSWORD; echo ""
+fi
+python3 setup_henjoji_space.py "$HENJOJI_JOIN_PASSWORD"
+unset HENJOJI_JOIN_PASSWORD
+echo "  ✦ 御護摩が本番に灯りました → https://kizuki-universe.onrender.com/s/henjoji/"
+echo "  ※メンバー招待の前に: 遍照寺さん（宗派・文言・名称の使用）への一言確認を忘れずに。"
