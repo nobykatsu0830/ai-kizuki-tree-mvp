@@ -206,15 +206,25 @@ def load_worldview(path: str | Path = DEFAULT_WORLDVIEW_PATH) -> dict:
 _request_ctx = threading.local()
 
 
-def set_current_space(space_id: str, worldview: dict) -> None:
-    """リクエスト処理の先頭で、対象スペースと世界観を束ねてセットする。"""
+def set_current_space(space_id: str, worldview: dict, base_override: str | None = None) -> None:
+    """リクエスト処理の先頭で、対象スペースと世界観を束ねてセットする。
+
+    base_override: 独自ドメイン(Host)解決時に "" を渡すと、URL接頭辞が /s/<slug> ではなく
+    ルート("")になる（完全分離）。None なら従来のパス方式のまま。"""
     _request_ctx.space_id = space_id
     _request_ctx.worldview = worldview
+    _request_ctx.base_override = base_override
 
 
 def clear_current_space() -> None:
     _request_ctx.space_id = None
     _request_ctx.worldview = None
+    _request_ctx.base_override = None
+
+
+def current_base_override() -> str | None:
+    """独自ドメイン解決時のURL接頭辞上書き（"" = ルート）。未解決なら None。"""
+    return getattr(_request_ctx, "base_override", None)
 
 
 def current_worldview() -> dict:
@@ -266,6 +276,48 @@ def create_space(conn, space_id: str, name: str, worldview: dict | None = None) 
         (space_id, (name or space_id).strip(), "", wv_json, now_iso()),
     )
     conn.execute("UPDATE spaces SET name=?, worldview_json=? WHERE id=?", ((name or space_id).strip(), wv_json, space_id))
+
+
+_DOMAIN_RE = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+
+
+def normalize_host(host: str | None) -> str:
+    """Hostヘッダ/ドメイン文字列を照合用に正規化（小文字化・ポート番号除去・空白除去）。"""
+    host = (host or "").strip().lower()
+    if host.startswith("["):  # IPv6リテラル [::1]:8787
+        return host.partition("]")[0].lstrip("[")
+    return host.partition(":")[0]
+
+
+def space_id_for_host(conn, host: str | None) -> str | None:
+    """Hostヘッダが登録済み custom_domain と一致するスペースIDを返す（未登録なら None=従来動作）。"""
+    h = normalize_host(host)
+    if not h:
+        return None
+    row = conn.execute("SELECT id FROM spaces WHERE custom_domain=?", (h,)).fetchone()
+    return row["id"] if row else None
+
+
+def set_space_custom_domain(conn, space_id: str, domain: str) -> None:
+    """スペースに独自ドメインを設定する（空文字で解除・冪等）。
+    形式の軽い検証と、他スペースとの重複拒否を行う。"""
+    domain = normalize_host(domain)
+    if domain:
+        if not _DOMAIN_RE.fullmatch(domain):
+            raise ValueError(f"ドメイン形式が不正です: {domain}")
+        dup = conn.execute(
+            "SELECT id FROM spaces WHERE custom_domain=? AND id<>?", (domain, space_id)
+        ).fetchone()
+        if dup:
+            raise ValueError(f"ドメイン '{domain}' は既にスペース '{dup['id']}' に設定されています")
+    conn.execute("UPDATE spaces SET custom_domain=? WHERE id=?", (domain or None, space_id))
+
+
+def get_space_custom_domain(conn, space_id: str) -> str | None:
+    row = conn.execute("SELECT custom_domain FROM spaces WHERE id=?", (space_id,)).fetchone()
+    if not row:
+        return None
+    return row["custom_domain"] or None
 
 
 def hash_admin_token(token: str) -> str:
@@ -523,6 +575,8 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         ensure_column(conn, "spaces", "worldview_json", "TEXT")  # スペース別の世界観（マルチテナント）
         ensure_column(conn, "spaces", "admin_token_hash", "TEXT")  # スペース別の管理者パスワード（SHA-256ハッシュ）
         ensure_column(conn, "spaces", "join_password_hash", "TEXT")  # スペース別の投稿パスワード（未設定=誰でも投稿可）
+        ensure_column(conn, "spaces", "custom_domain", "TEXT")  # 独自ドメイン→スペース解決（未設定=パス方式のみ）
+        ensure_column(conn, "themes", "space_id", f"TEXT NOT NULL DEFAULT '{DEFAULT_SPACE_ID}'")  # テーマのスペース分離（既存行はnoby帰属）
         conn.execute(
             "INSERT OR IGNORE INTO spaces (id, name, worldview_path, created_at) VALUES (?, ?, ?, ?)",
             (space_id, str(worldview.get("terms", {}).get("universe", "気づきの宇宙")), "worldview.yaml", now_iso()),
@@ -533,52 +587,73 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         # テーマ語彙が空なら、既存の気づきに付いているタグを初期語彙として取り込む（データから育てる）
         theme_count = conn.execute("SELECT COUNT(*) AS n FROM themes").fetchone()["n"]
         if not theme_count:
-            seen: set[str] = set()
-            for r in conn.execute("SELECT tags FROM reflections"):
+            seen: set[tuple[str, str]] = set()
+            for r in conn.execute("SELECT tags, space_id FROM reflections"):
                 for tag in parse_json_list(r["tags"], default=()):
                     if tag and tag != "未分類":
-                        seen.add(tag)
-            for tag in seen:
+                        seen.add((tag, r["space_id"] or space_id))
+            for tag, tag_space in seen:
                 conn.execute(
-                    "INSERT OR IGNORE INTO themes (name, status, created_at) VALUES (?, 'active', ?)",
-                    (tag, now_iso()),
+                    "INSERT OR IGNORE INTO themes (name, status, created_at, space_id) VALUES (?, 'active', ?, ?)",
+                    (tag, now_iso(), tag_space),
                 )
 
 
-def active_theme_names(conn) -> list[str]:
-    """現在アクティブなテーマ名を生成順に返す（AI分類で再利用する語彙）。"""
+def _theme_space(space_id: str | None) -> str:
+    """themes操作の対象スペース。省略時は現在のリクエストのスペース（CLI/バッチはnoby）。"""
+    return str(space_id or current_space_id())
+
+
+def active_theme_names(conn, space_id: str | None = None) -> list[str]:
+    """現在アクティブなテーマ名を生成順に返す（AI分類で再利用する語彙）。スペース単位。"""
     rows = conn.execute(
-        "SELECT name FROM themes WHERE status='active' ORDER BY created_at ASC, name ASC"
+        "SELECT name FROM themes WHERE status='active' AND space_id=? ORDER BY created_at ASC, name ASC",
+        (_theme_space(space_id),),
     ).fetchall()
     return [row["name"] for row in rows]
 
 
-def ensure_theme(conn, name: str) -> None:
-    """テーマが無ければ追加する（自動創発の保存先）。既存ならそのまま。"""
+def ensure_theme(conn, name: str, space_id: str | None = None) -> None:
+    """テーマが無ければ追加する（自動創発の保存先）。既存ならそのまま。スペース単位。
+
+    注意: themes の PRIMARY KEY は name のまま（破壊的DDL禁止のため変更しない）。
+    同名テーマが他スペースに既にある場合は INSERT OR IGNORE で静かにスキップされる
+    （公開側チップは reflections.tags 由来のため表示には影響しない。既知の制限）。"""
     name = (name or "").strip()
     if not name or name == "未分類":
         return
+    sid = _theme_space(space_id)
+    exists = conn.execute(
+        "SELECT 1 FROM themes WHERE name=? AND space_id=?", (name, sid)
+    ).fetchone()
+    if exists:
+        return
     conn.execute(
-        "INSERT OR IGNORE INTO themes (name, status, created_at) VALUES (?, 'active', ?)",
-        (name, now_iso()),
+        "INSERT OR IGNORE INTO themes (name, status, created_at, space_id) VALUES (?, 'active', ?, ?)",
+        (name, now_iso(), sid),
     )
 
 
-def hidden_theme_names(conn) -> set:
-    """非表示テーマ名の集合（公開ページ・宇宙でのフィルタ用）。"""
-    rows = conn.execute("SELECT name FROM themes WHERE status='hidden'").fetchall()
+def hidden_theme_names(conn, space_id: str | None = None) -> set:
+    """非表示テーマ名の集合（公開ページ・宇宙でのフィルタ用）。スペース単位。"""
+    rows = conn.execute(
+        "SELECT name FROM themes WHERE status='hidden' AND space_id=?",
+        (_theme_space(space_id),),
+    ).fetchall()
     return {row["name"] for row in rows}
 
 
-def theme_overview(conn) -> list[dict]:
-    """テーマ一覧 + 使用件数（承認済みの気づき基準）。管理画面の表示用。"""
+def theme_overview(conn, space_id: str | None = None) -> list[dict]:
+    """テーマ一覧 + 使用件数（承認済みの気づき基準）。管理画面の表示用。スペース単位。"""
+    sid = _theme_space(space_id)
     counts: dict[str, int] = {}
-    for r in conn.execute("SELECT tags FROM reflections WHERE status='approved'").fetchall():
+    for r in conn.execute("SELECT tags FROM reflections WHERE status='approved' AND space_id=?", (sid,)).fetchall():
         for tag in parse_json_list(r["tags"], default=()):
             if tag and tag != "未分類":
                 counts[tag] = counts.get(tag, 0) + 1
     rows = conn.execute(
-        "SELECT name, status, merged_into FROM themes ORDER BY created_at ASC, name ASC"
+        "SELECT name, status, merged_into FROM themes WHERE space_id=? ORDER BY created_at ASC, name ASC",
+        (sid,),
     ).fetchall()
     known = {row["name"] for row in rows}
     overview = [
@@ -592,9 +667,10 @@ def theme_overview(conn) -> list[dict]:
     return overview
 
 
-def _replace_tag_everywhere(conn, old: str, new: str | None) -> None:
-    """全reflectionsのtags JSON内の old を new に置換（new=None なら削除）。重複排除・順序維持。"""
-    rows = conn.execute("SELECT id, tags FROM reflections").fetchall()
+def _replace_tag_everywhere(conn, old: str, new: str | None, space_id: str | None = None) -> None:
+    """対象スペースのreflectionsのtags JSON内の old を new に置換（new=None なら削除）。重複排除・順序維持。"""
+    sid = _theme_space(space_id)
+    rows = conn.execute("SELECT id, tags FROM reflections WHERE space_id=?", (sid,)).fetchall()
     for r in rows:
         tags = parse_json_list(r["tags"], default=())
         if old not in tags:
@@ -610,38 +686,41 @@ def _replace_tag_everywhere(conn, old: str, new: str | None) -> None:
         )
 
 
-def rename_theme(conn, old: str, new: str) -> None:
-    """テーマを改名する（実データのタグも一括置換）。"""
+def rename_theme(conn, old: str, new: str, space_id: str | None = None) -> None:
+    """テーマを改名する（対象スペースの実データのタグも一括置換）。"""
     old = (old or "").strip()
     new = (new or "").strip()
     if not old or not new or old == new:
         return
-    _replace_tag_everywhere(conn, old, new)
-    ensure_theme(conn, new)
-    conn.execute("DELETE FROM themes WHERE name=?", (old,))
+    sid = _theme_space(space_id)
+    _replace_tag_everywhere(conn, old, new, space_id=sid)
+    ensure_theme(conn, new, space_id=sid)
+    conn.execute("DELETE FROM themes WHERE name=? AND space_id=?", (old, sid))
 
 
-def merge_theme(conn, src: str, dst: str) -> None:
-    """テーマ src を dst に統合する（タグ置換 + src は履歴として hidden 化）。"""
+def merge_theme(conn, src: str, dst: str, space_id: str | None = None) -> None:
+    """テーマ src を dst に統合する（タグ置換 + src は履歴として hidden 化）。スペース単位。"""
     src = (src or "").strip()
     dst = (dst or "").strip()
     if not src or not dst or src == dst:
         return
-    _replace_tag_everywhere(conn, src, dst)
-    ensure_theme(conn, dst)
-    ensure_theme(conn, src)
-    conn.execute("UPDATE themes SET status='hidden', merged_into=? WHERE name=?", (dst, src))
+    sid = _theme_space(space_id)
+    _replace_tag_everywhere(conn, src, dst, space_id=sid)
+    ensure_theme(conn, dst, space_id=sid)
+    ensure_theme(conn, src, space_id=sid)
+    conn.execute("UPDATE themes SET status='hidden', merged_into=? WHERE name=? AND space_id=?", (dst, src, sid))
 
 
-def set_theme_status(conn, name: str, status: str) -> None:
-    """テーマの表示/非表示を切り替える。"""
+def set_theme_status(conn, name: str, status: str, space_id: str | None = None) -> None:
+    """テーマの表示/非表示を切り替える。スペース単位。"""
     name = (name or "").strip()
     if not name or status not in ("active", "hidden"):
         return
-    ensure_theme(conn, name)
-    conn.execute("UPDATE themes SET status=? WHERE name=?", (status, name))
+    sid = _theme_space(space_id)
+    ensure_theme(conn, name, space_id=sid)
+    conn.execute("UPDATE themes SET status=? WHERE name=? AND space_id=?", (status, name, sid))
     if status == "active":
-        conn.execute("UPDATE themes SET merged_into=NULL WHERE name=?", (name,))
+        conn.execute("UPDATE themes SET merged_into=NULL WHERE name=? AND space_id=?", (name, sid))
 
 
 def normalize_text(text: str) -> str:

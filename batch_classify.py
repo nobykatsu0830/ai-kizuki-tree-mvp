@@ -158,7 +158,8 @@ def clean_themes(themes) -> list[str]:
 
 
 def apply_classification(conn, results: list) -> int:
-    """分類結果を reflections.tags へ反映し、新テーマを語彙表に追加、themed_at を立てる。"""
+    """分類結果を reflections.tags へ反映し、新テーマを語彙表に追加、themed_at を立てる。
+    テーマはその気づきが属するスペースに帰属させる（テーマのper-space分離）。"""
     updated = 0
     for item in results:
         rid = str((item or {}).get("id", "")).strip()
@@ -169,8 +170,10 @@ def apply_classification(conn, results: list) -> int:
             "UPDATE reflections SET tags=?, themed_at=? WHERE id=?",
             (json.dumps(themes, ensure_ascii=False), pc.now_iso(), rid),
         )
+        row = conn.execute("SELECT space_id FROM reflections WHERE id=?", (rid,)).fetchone()
+        row_space = (row["space_id"] if row else None) or pc.DEFAULT_SPACE_ID
         for theme in themes:
-            pc.ensure_theme(conn, theme)
+            pc.ensure_theme(conn, theme, space_id=row_space)
         updated += 1
     return updated
 
@@ -197,7 +200,16 @@ def run(limit: int = BATCH_LIMIT) -> int:
         rows = pending_rows(conn, limit)
         updated = 0
         if rows:
-            theme_names = pc.active_theme_names(conn)
+            # 分類対象は全スペース混在のため、語彙ヒントも全スペースから合算する
+            theme_names: list[str] = []
+            try:
+                space_ids = [s["id"] for s in pc.list_spaces(conn)] or [pc.DEFAULT_SPACE_ID]
+            except Exception:
+                space_ids = [pc.DEFAULT_SPACE_ID]
+            for sid in space_ids:
+                for name in pc.active_theme_names(conn, space_id=sid):
+                    if name not in theme_names:
+                        theme_names.append(name)
             prompt = build_prompt(theme_names, rows)
             result = classify_with_codex(prompt)
             updated = apply_classification(conn, result.get("results", []))

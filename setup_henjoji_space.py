@@ -60,6 +60,9 @@ HENJOJI_WORLDVIEW = {
         "new_label": "いま、火に入りました",
         "resonate_label": "この護摩木と響き合う",
         "footer": "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。",
+        "cosmos_title": "焔の空",
+        "cosmos_link": "焔の空を眺める",
+        "back_label": "御護摩にもどる",
     },
     "theme": {
         "primary_color": "#0d1230",

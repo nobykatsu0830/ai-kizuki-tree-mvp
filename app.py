@@ -2082,6 +2082,285 @@ def is_admin_path(path: str) -> bool:
 # 一切変更せず、ルートディスパッチ側（do_GET/do_POST）で scene 分岐する。
 # ============================================================================
 
+# 焔の空（goma版 /cosmos）— 既存3Dエンジン(COSMOS_SHELLのJS)を流用し、テーマだけ暖色に着せ替える。
+# noby /cosmos（COSMOS_SHELL・cosmos_page）は無改変。ゴールデン一致必須のためテンプレートは複製。
+GOMA_COSMOS_SHELL = """<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__COSMOS_TITLE__｜__UNIVERSE__</title>
+__FONTS__
+<style>
+*{box-sizing:border-box}
+:root{--ink:#e8dfc8;--dim:#9a90ad;--gold:#f3c76a;--gold-soft:#ffe0a0;--line:rgba(243,199,106,.18);
+--serif:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;
+--sans:'Zen Kaku Gothic New','Hiragino Sans','Yu Gothic',sans-serif}
+html,body{height:100%;margin:0;overflow:hidden;font-family:var(--sans);color:var(--ink);background:#070a18}
+.sky{position:fixed;inset:0;z-index:-3;background:
+ radial-gradient(1200px 720px at 50% 118%,rgba(124,64,56,.34),transparent 62%),
+ radial-gradient(900px 620px at 78% -8%,rgba(28,28,66,.32),transparent 60%),
+ linear-gradient(178deg,#070a18 0%,#0d1230 46%,#1c1c42 74%,#3a2547 100%)}
+.stars{position:fixed;inset:-12%;z-index:-2;pointer-events:none;background-image:
+ radial-gradient(rgba(255,180,90,.22) 1px,transparent 1.6px);
+ background-size:220px 220px;background-position:0 0;
+ opacity:.35;animation:embertwinkle 8s ease-in-out infinite alternate}
+@keyframes embertwinkle{from{opacity:.2}to{opacity:.42}}
+#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab;touch-action:none}
+#stage:active{cursor:grabbing}
+.glass{background:rgba(15,10,8,.72);border:1px solid var(--line);backdrop-filter:blur(16px) saturate(1.2);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.hud-brand{position:fixed;top:16px;left:16px;z-index:10;padding:13px 17px;max-width:280px}
+.hud-brand a{color:var(--dim);font-size:12.5px;text-decoration:none;letter-spacing:.08em}
+.hud-brand a:hover{color:var(--gold-soft)}
+.hud-brand h1{font-family:var(--serif);font-weight:600;font-size:21px;margin:5px 0 3px;letter-spacing:.12em;color:#f6ecdc}
+.hint{font-size:11px;color:var(--dim);margin:0;letter-spacing:.05em}
+.hud-nav{position:fixed;top:16px;right:16px;z-index:10;padding:7px;display:flex;gap:6px}
+.bn{display:inline-flex;align-items:center;min-height:40px;padding:6px 16px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--ink);font-size:13.5px;font-weight:700;text-decoration:none;cursor:pointer;font-family:var(--sans);letter-spacing:.05em;transition:.22s}
+.bn:hover{color:var(--gold-soft);border-color:rgba(243,199,106,.5)}
+.bn.gold{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241505;border-color:transparent}
+.labels{position:fixed;inset:0;pointer-events:none;z-index:5}
+.label{position:absolute;z-index:6;min-width:128px;max-width:200px;padding:10px 13px;border-radius:14px;
+ background:rgba(20,10,8,.84);border:1px solid rgba(243,199,106,.2);backdrop-filter:blur(10px);
+ color:var(--ink);box-shadow:0 10px 36px rgba(0,0,0,.5),0 0 26px var(--c,transparent);
+ transform:translate(-50%,-130%);transition:opacity .2s;pointer-events:auto;cursor:pointer}
+.label.hidden{opacity:0;pointer-events:none}
+.label b{display:block;color:var(--gold-soft);font-family:var(--serif);font-size:12.5px;letter-spacing:.06em}
+.label p{margin:4px 0 6px;font-size:12.5px;line-height:1.6;color:#d9cfb6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.label .tag{font-size:10.5px;padding:2px 9px;border-radius:999px;background:rgba(243,199,106,.12);color:#f3c76a;border:1px solid rgba(243,199,106,.25)}
+.label.active{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),0 16px 50px rgba(0,0,0,.6),0 0 44px var(--c,transparent)}
+.dock{position:fixed;z-index:9;left:16px;bottom:16px;max-width:min(420px,calc(100vw - 32px));padding:12px 14px}
+.dock h3{margin:0 0 8px;font-family:var(--serif);font-weight:600;color:var(--gold);font-size:12.5px;letter-spacing:.2em}
+.filter-status{margin:0 0 10px;color:var(--dim);font-size:12px;letter-spacing:.06em}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--ink);border-radius:999px;min-height:34px;padding:2px 14px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:.2s;white-space:nowrap;flex:none}
+.chip:hover{border-color:rgba(243,199,106,.5)}
+.chip.active{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241505;border-color:transparent}
+.zoomers{position:fixed;z-index:9;right:16px;top:50%;transform:translateY(-50%);display:grid;gap:8px;padding:8px}
+.zoomers button{appearance:none;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--ink);font-size:19px;cursor:pointer}
+.zoomers button:hover{color:var(--gold-soft);border-color:rgba(243,199,106,.5)}
+.detail{position:fixed;z-index:11;right:16px;bottom:16px;width:min(430px,calc(100vw - 32px));padding:20px 22px;opacity:0;transform:translateY(16px);pointer-events:none;transition:.3s}
+.detail.show{opacity:1;transform:translateY(0);pointer-events:auto}
+.detail .close{position:absolute;top:10px;right:12px;appearance:none;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:6px}
+.detail .close:hover{color:var(--gold-soft)}
+.pill{display:inline-flex;background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241505;border-radius:999px;padding:4px 12px;font-size:11.5px;font-weight:700;letter-spacing:.06em;margin-bottom:10px}
+.detail h2{font-family:var(--serif);font-weight:600;font-size:21px;margin:0 0 8px;color:#f6ecdc;letter-spacing:.06em}
+.detail .meta{font-size:12px;color:var(--dim);margin:0 0 6px}
+.detail .body{font-family:var(--serif);margin:0;color:#efe4cf;line-height:2;font-size:15px;max-height:34vh;overflow:auto}
+.detail .voice-link{display:inline-flex;align-items:center;justify-content:center;margin-top:16px;padding:9px 20px;border-radius:999px;border:1px solid rgba(243,199,106,.5);background:rgba(255,255,255,.04);color:var(--gold-soft);font-size:13px;font-weight:700;letter-spacing:.06em;text-decoration:none;transition:.25s}
+.detail .voice-link:hover{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241505;border-color:transparent}
+.rel{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.rel-h{display:block;font-family:var(--serif);font-weight:600;color:#f3c76a;font-size:12px;letter-spacing:.16em;margin-bottom:8px}
+.rel-item{display:block;width:100%;text-align:left;appearance:none;background:rgba(243,199,106,.07);border:1px solid rgba(243,199,106,.22);border-radius:12px;padding:9px 12px;margin-bottom:7px;cursor:pointer;font-family:var(--sans);transition:.2s}
+.rel-item:hover{border-color:rgba(243,199,106,.55);background:rgba(243,199,106,.13)}
+.rel-who{display:block;color:#ffe9c2;font-size:12.5px;font-weight:700;letter-spacing:.05em}
+.rel-reason{display:block;color:var(--dim);font-size:11.5px;margin-top:3px;line-height:1.6}
+.detail-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.btn-mini{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid rgba(243,199,106,.5);background:rgba(255,255,255,.04);color:var(--gold-soft);font-size:12.5px;font-weight:700;letter-spacing:.05em;text-decoration:none;transition:.25s}
+.btn-mini:hover{background:linear-gradient(135deg,var(--gold),var(--gold-soft));color:#241505;border-color:transparent}
+.cosmos-empty{position:fixed;inset:0;z-index:8;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;pointer-events:none}
+.cosmos-empty.show{display:flex}
+.cosmos-empty .seed{width:14px;height:14px;border-radius:50%;background:var(--gold-soft);box-shadow:0 0 22px 5px rgba(255,180,90,.7);margin-bottom:28px;animation:epulse 3.6s ease-in-out infinite}
+@keyframes epulse{50%{box-shadow:0 0 32px 9px rgba(255,180,90,.95)}}
+.cosmos-empty p{font-family:var(--serif);font-size:clamp(17px,3.4vw,23px);line-height:2.25;color:var(--gold-soft);letter-spacing:.12em;margin:0 0 32px;text-shadow:0 0 30px rgba(243,199,106,.32);max-width:18em}
+.cosmos-empty .bn{pointer-events:auto}
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media(max-width:680px){
+ .hud-brand{max-width:190px;padding:10px 13px}.hud-brand h1{font-size:16.5px}.hint{display:none}
+ .dock{left:12px;right:74px;bottom:max(12px,env(safe-area-inset-bottom))}
+ .chips{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}
+ .detail{left:12px;right:12px;width:auto;bottom:84px}
+ .zoomers{right:12px;top:auto;bottom:max(12px,env(safe-area-inset-bottom));transform:none}
+ .label{min-width:104px;max-width:138px}}
+</style></head>
+<body>
+<div class="sky"></div><div class="stars"></div>
+<canvas id="stage"></canvas>
+<div class="labels" id="labels"></div>
+<div class="cosmos-empty" id="cosmosEmpty"><span class="seed"></span><p>この御護摩は、まだ夜明け前にある。<br>最初のひとつの光を、あなたがくべる。</p><a class="bn gold" href="__BASE__/submit">最初の__STAR__をくべる</a></div>
+<header class="hud-brand glass"><a href="__BASE__/">← __BACK_LABEL__</a><h1>__COSMOS_TITLE__</h1><p class="hint">ドラッグで回す ・ ホイールでズーム ・ __STAR__を選ぶ</p></header>
+<nav class="hud-nav glass"><a class="bn gold" href="__BASE__/submit">__STAR__をくべる</a></nav>
+<section class="dock glass"><h3>テーマでたどる</h3><p class="filter-status" id="filterStatus">すべての__STAR__を表示中</p><div class="chips" id="chips"><button class="chip active" data-tag="all">すべて</button></div></section>
+<div class="zoomers glass"><button id="zin" aria-label="ズームイン">＋</button><button id="zout" aria-label="ズームアウト">−</button></div>
+<aside class="detail glass" id="detail" aria-live="polite"></aside>
+<script>
+const nodes=__DATA__;
+const starLinks=__LINKS__;
+const STAR_TERM="__STAR__";
+const BASE="__BASE__";
+const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
+const labels=document.getElementById('labels'),detail=document.getElementById('detail'),chips=document.getElementById('chips'),filterStatus=document.getElementById('filterStatus');
+const colors=['#f3c76a','#ffb43a','#ff7a1e','#e8a44b','#c9915a','#ffd98a'];
+const okibiColor='#8a2f1d';
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W,H,dpr=1,R=270,rotX=-.18,rotY=-.55,zoom=1,drag=false,moved=false,last={x:0,y:0},selected=null,filter='all',rafId=null;
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function color(n){return n.okibi?okibiColor:colors[Math.abs([...n.id].reduce((a,c)=>a+c.charCodeAt(0),0))%colors.length]}
+const allTags=[...new Set(nodes.flatMap(n=>n.tags&&n.tags.length?n.tags:['未分類']))];
+allTags.forEach(t=>{const b=document.createElement('button');b.className='chip';b.dataset.tag=t;b.textContent=t;b.onclick=()=>setFilter(t,b);chips.appendChild(b)});
+document.querySelector('.chip[data-tag="all"]').onclick=function(){setFilter('all',this)};
+function setFilter(t,b){
+  filter=t;selected=null;setActiveLabel(null);detail.classList.remove('show');
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  labelEls.forEach((el,id)=>{
+    const n=nodeMap.get(id);
+    if(!n||!visible(n)){el.classList.add('hidden');el.style.opacity='0';el._shown=false;}
+  });
+  const count=nodes.filter(n=>visible(n)).length;
+  filterStatus.textContent=t==='all'?`すべての${STAR_TERM}を表示中（${count}件）`:`${t} の${STAR_TERM}だけを表示中（${count}件）`;
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(render);
+}
+const labelEls=new Map();
+nodes.forEach(n=>{
+ const el=document.createElement('article');el.className='label';el.style.setProperty('--c',color(n)+'55');
+ el.innerHTML=`<b>${escapeHtml(n.name)}</b><p>${escapeHtml(n.body.slice(0,56))}${n.body.length>56?'…':''}</p><span class="tag">${escapeHtml((n.tags&&n.tags[0])||'未分類')}</span>`;
+ el.onclick=()=>select(n.id);labels.appendChild(el);labelEls.set(n.id,el)});
+if(!nodes.length){document.getElementById('cosmosEmpty').classList.add('show');
+ document.querySelector('.dock').style.display='none';document.querySelector('.zoomers').style.display='none';}
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);R=Math.min(W,H)*.32}
+resize();addEventListener('resize',resize);
+function sphere(n){const lat=(n.lat||0)*Math.PI/180,lon=(n.lon||0)*Math.PI/180;
+ let x=Math.cos(lat)*Math.sin(lon),y=Math.sin(lat),z=Math.cos(lat)*Math.cos(lon);
+ const cy=Math.cos(rotY),sy=Math.sin(rotY),cx=Math.cos(rotX),sx=Math.sin(rotX);
+ const x1=x*cy+z*sy,z1=-x*sy+z*cy,y1=y;
+ return{x:x1,y:y1*cx-z1*sx,z:y1*sx+z1*cx}}
+function project(p){const per=1.95/(1.95-p.z*.48);return{x:W/2+p.x*R*zoom*per,y:H/2+14-p.y*R*zoom*per,scale:per,z:p.z}}
+function visible(n){return filter==='all'||(n.tags||[]).includes(filter)}
+filterStatus.textContent=`すべての${STAR_TERM}を表示中（${nodes.length}件）`;
+const nodeMap=new Map(nodes.map(n=>[n.id,n]));
+function nodeBy(id){return nodeMap.get(id)}
+function setActiveLabel(id){labelEls.forEach((el,k)=>el.classList.toggle('active',k===id))}
+const constellationGroups=[...nodes.reduce((m,n)=>{if(n.constellation_id){if(!m.has(n.constellation_id))m.set(n.constellation_id,[]);m.get(n.constellation_id).push(n)}return m},new Map()).values()];
+const threads=starLinks.filter(l=>nodeMap.has(l.a)&&nodeMap.has(l.b));
+const threadsByStar=new Map();
+threads.forEach(l=>{
+ if(!threadsByStar.has(l.a))threadsByStar.set(l.a,[]);
+ if(!threadsByStar.has(l.b))threadsByStar.set(l.b,[]);
+ threadsByStar.get(l.a).push({id:l.b,reason:l.reason||''});
+ threadsByStar.get(l.b).push({id:l.a,reason:l.reason||''});
+});
+function drawThread(a,b,active){const pa=a&&a._s,pb=b&&b._s;if(!pa||!pb)return;
+ ctx.save();ctx.setLineDash(active?[]:[3,5]);
+ const g=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
+ if(active){g.addColorStop(0,'rgba(243,199,106,.95)');g.addColorStop(1,'rgba(255,180,90,.8)');ctx.shadowBlur=9;ctx.shadowColor='rgba(243,199,106,.75)'}
+ else{g.addColorStop(0,'rgba(243,199,106,.28)');g.addColorStop(1,'rgba(255,140,50,.18)')}
+ ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.strokeStyle=g;ctx.lineWidth=active?1.6:.9;ctx.stroke();
+ ctx.restore();ctx.shadowBlur=0}
+function drawCore(){const cx=W/2,cy=H/2+14,rr=R*zoom;
+ let g=ctx.createRadialGradient(cx,cy,rr*.02,cx,cy,rr*1.06);
+ g.addColorStop(0,'rgba(255,150,60,.14)');g.addColorStop(.55,'rgba(140,60,30,.07)');g.addColorStop(1,'rgba(0,0,0,0)');
+ ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,rr*1.06,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle='rgba(255,150,60,.07)';ctx.lineWidth=1;
+ for(let i=-60;i<=60;i+=30){ctx.beginPath();ctx.ellipse(cx,cy,rr,Math.abs(rr*Math.cos(i*Math.PI/180)),0,0,Math.PI*2);ctx.stroke()}}
+function drawLineP(a,b,active){const pa=a&&a._s,pb=b&&b._s;if(!pa||!pb)return;
+ const g=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
+ if(active){g.addColorStop(0,'rgba(255,122,30,.95)');g.addColorStop(1,'rgba(255,180,90,.6)')}
+ else{g.addColorStop(0,'rgba(255,122,30,.16)');g.addColorStop(1,'rgba(255,122,30,.08)')}
+ ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.strokeStyle=g;ctx.lineWidth=active?1.7:1;
+ if(active){ctx.shadowBlur=8;ctx.shadowColor='rgba(255,122,30,.8)'}
+ ctx.stroke();ctx.shadowBlur=0}
+function drawStar(x,y,r,c,bright){
+ const g=ctx.createRadialGradient(x,y,0,x,y,r*4.2);
+ g.addColorStop(0,c);g.addColorStop(.35,c+'88');g.addColorStop(1,'rgba(0,0,0,0)');
+ ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r*4.2,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#fff3c8';ctx.beginPath();ctx.arc(x,y,Math.max(1.4,r*.62),0,Math.PI*2);ctx.fill();
+ if(bright){ctx.strokeStyle=c;ctx.lineWidth=1;ctx.globalAlpha=.85;
+  ctx.beginPath();ctx.moveTo(x-r*5,y);ctx.lineTo(x+r*5,y);ctx.moveTo(x,y-r*5);ctx.lineTo(x,y+r*5);ctx.stroke();ctx.globalAlpha=1}}
+const order=nodes.slice();
+function render(){ctx.clearRect(0,0,W,H);
+ if(!drag&&!reduceMotion)rotY+=.0012;
+ drawCore();
+ for(let i=0;i<nodes.length;i++){const n=nodes[i];n._p=sphere(n);n._s=project(n._p);}
+ threads.forEach(l=>{const a=nodeMap.get(l.a),b=nodeMap.get(l.b);
+  if(a&&b&&visible(a)&&visible(b))drawThread(a,b,!!(selected&&(selected.id===l.a||selected.id===l.b)))});
+ constellationGroups.forEach(group=>{for(let i=1;i<group.length;i++){const a=group[i-1],b=group[i];
+  if(visible(a)&&visible(b))drawLineP(a,b,selected&&selected.constellation_id===a.constellation_id)}});
+ for(let i=0;i<nodes.length;i++){const n=nodes[i];if(n.parent_id){const p=nodeMap.get(n.parent_id);
+  if(p&&visible(n)&&visible(p))drawLineP(n,p,selected&&(selected.id===n.id||selected.id===p.id))}}
+ order.sort((a,b)=>b._p.z-a._p.z);
+ const shown=[],showLabels=new Set();
+ for(let i=0;i<order.length;i++){const n=order[i];
+  if(!visible(n)||n._p.z<=.05)continue;
+  const important=selected&&selected.id===n.id;
+  let collides=false;
+  for(let j=0;j<shown.length;j++){if(Math.abs(shown[j].x-n._s.x)<170&&Math.abs(shown[j].y-n._s.y)<116){collides=true;break;}}
+  if(important||!collides){showLabels.add(n.id);shown.push({x:n._s.x,y:n._s.y})}}
+ order.sort((a,b)=>a._p.z-b._p.z);
+ for(let i=0;i<order.length;i++){const n=order[i],s=n._s,el=labelEls.get(n.id);
+  const vis=visible(n),labelVisible=vis&&showLabels.has(n.id);
+  if(labelVisible){
+   if(el._shown!==true){el.classList.remove('hidden');el._shown=true;}
+   el.style.left=s.x+'px';el.style.top=s.y+'px';
+   const tagEl=el.querySelector('.tag');
+   if(tagEl)tagEl.textContent=filter!=='all'&&(n.tags||[]).includes(filter)?filter:((n.tags&&n.tags[0])||'未分類');
+   el.style.opacity=Math.min(1,.55+s.scale*.34);
+  }else if(el._shown!==false){el.classList.add('hidden');el.style.opacity='0';el._shown=false;}
+  if(!vis)continue;
+  const isSel=selected&&selected.id===n.id;
+  drawStar(s.x,s.y,Math.max(2.2,4.6*s.scale)*(isSel?1.5:1),color(n),isSel||n._p.z>.72)}
+ rafId=requestAnimationFrame(render)}
+rafId=requestAnimationFrame(render);
+function flyTo(id){const n=nodeMap.get(id);if(!n)return;
+ rotY=-(n.lon||0)*Math.PI/180;
+ rotX=Math.max(-1.1,Math.min(1.1,(n.lat||0)*Math.PI/180));
+ select(id)}
+function select(id){selected=nodeBy(id);if(!selected)return;setActiveLabel(id);
+ const constellation=selected.constellation_name?`<p class="meta">☄ ${escapeHtml(selected.constellation_name)}</p>`:'';
+ const reply=selected.reply_to?`<p class="meta">↪ ${escapeHtml(selected.reply_to)}への返信</p>`:'';
+ const rel=threadsByStar.get(id)||[];
+ const relItems=rel.map(r=>{const p=nodeMap.get(r.id);if(!p)return '';
+  return `<button class="rel-item" data-id="${escapeHtml(r.id)}"><span class="rel-who">✧ ${escapeHtml(p.name)}の${STAR_TERM}</span>${r.reason?`<span class="rel-reason">── ${escapeHtml(r.reason)}</span>`:''}</button>`}).join('');
+ const relBlock=relItems?`<div class="rel"><b class="rel-h">響き合う${STAR_TERM}</b>${relItems}</div>`:'';
+ detail.innerHTML=`<button class="close" aria-label="閉じる">×</button>
+  <span class="pill">${escapeHtml(selected.constellation_name||(selected.tags&&selected.tags[0])||'未分類')}</span>
+  <h2>${escapeHtml(selected.name)}の${STAR_TERM}</h2>${constellation}${reply}
+  <p class="body">${escapeHtml(selected.body)}</p>
+  ${relBlock}
+  <div class="detail-actions"><a class="btn-mini" href="${BASE}/star/${encodeURIComponent(selected.id)}">この${STAR_TERM}をひらく</a>
+  <a class="btn-mini" href="${BASE}/submit?parent_id=${encodeURIComponent(selected.id)}">声を寄せる</a></div>`;
+ detail.classList.add('show');
+ detail.querySelectorAll('.rel-item').forEach(btn=>{btn.onclick=()=>flyTo(btn.dataset.id)});
+ detail.querySelector('.close').onclick=()=>{selected=null;setActiveLabel(null);detail.classList.remove('show')};}
+canvas.addEventListener('pointerdown',e=>{drag=true;moved=false;last={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener('pointermove',e=>{if(!drag)return;moved=true;
+ rotY+=(e.clientX-last.x)*.006;rotX+=(e.clientY-last.y)*.006;
+ rotX=Math.max(-1.1,Math.min(1.1,rotX));last={x:e.clientX,y:e.clientY}});
+canvas.addEventListener('pointerup',e=>{if(!moved){selected=null;setActiveLabel(null);detail.classList.remove('show')}drag=false;});
+canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.74,Math.min(1.4,zoom-e.deltaY*.0007))},{passive:false});
+document.getElementById('zin').onclick=()=>zoom=Math.min(1.4,zoom+.08);
+document.getElementById('zout').onclick=()=>zoom=Math.max(.74,zoom-.08);
+</script></body></html>"""
+
+
+def goma_cosmos_page() -> bytes:
+    """焔の空: gomaシーンの3D没入ビュー（既存3Dエンジン流用・暖色テーマ）。noby /cosmosは無改変。"""
+    gw = pipeline_common.worldview_goma()
+    universe = pipeline_common.worldview_term("universe", "気づきの御護摩")
+    star = pipeline_common.worldview_term("star", "護摩木")
+    with db() as conn:
+        hidden = pipeline_common.hidden_theme_names(conn)
+        links = pipeline_common.links_payload(conn)
+    nodes = cosmos_nodes(cosmos_rows(), hidden=hidden)
+    now = _goma_now()
+    # okibi判定はapproved_at/created_atが必要なため、cosmos_rows由来のRowから直接引く
+    row_by_id = {row_get(r, "id"): r for r in cosmos_rows()}
+    for n in nodes:
+        r = row_by_id.get(n["id"])
+        n["okibi"] = bool(r is not None and goma_is_okibi(r, now))
+    data_json = json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/")
+    links_json = json.dumps(links, ensure_ascii=False).replace("</", "<\\/")
+    page = (
+        GOMA_COSMOS_SHELL
+        .replace("__FONTS__", PAGE_FONTS)
+        .replace("__UNIVERSE__", esc(universe))
+        .replace("__STAR__", esc(star))
+        .replace("__COSMOS_TITLE__", esc(gw.get("cosmos_title", "焔の空")))
+        .replace("__BACK_LABEL__", esc(gw.get("back_label", "御護摩にもどる")))
+        .replace("__DATA__", data_json)
+        .replace("__LINKS__", links_json)
+        .replace("__BASE__", space_base())
+    )
+    return page.encode("utf-8")
+
 GOMA_OKIBI_THRESHOLD_DAYS = 7
 
 
@@ -2136,6 +2415,7 @@ GOMA_CSS = """
   h1 { font-size: 40px; font-weight: 600; letter-spacing: 0.24em; color: #f2e9d4; text-shadow: 0 0 30px rgba(255,150,60,0.25); }
   .tagline { margin-top: 14px; font-size: 14px; letter-spacing: 0.22em; color: #cbb894; }
   .date { margin-top: 10px; font-size: 12px; letter-spacing: 0.3em; color: #8d84a3; }
+  .cosmos-link-note { margin-top: 18px; }
 
   .hero { position: relative; height: 520px; margin-top: 10px; }
 
@@ -2482,6 +2762,7 @@ def goma_public_page() -> bytes:
     <div class="temple">{esc(gw.get("temple", "遍照寺 朝のお勤め"))}</div>
     <h1>{esc(gw.get("title", "気づきの御護摩"))}</h1>
     <div class="tagline">{esc(gw.get("tagline", "あなたの気づきが、護摩木となって、誰かの明日を照らす。"))}</div>
+    <p class="cosmos-link-note"><a class="answer-link" href="{base}/cosmos">{esc(gw.get("cosmos_link", "焔の空を眺める"))}</a></p>
   </header>
 
   <section class="hero">
@@ -2703,7 +2984,11 @@ def resolve_space_path(path: str) -> tuple[str, str]:
 
 
 def space_base() -> str:
-    """現在の宇宙のURL接頭辞。デフォルト宇宙は空文字、他は /s/<slug>。"""
+    """現在の宇宙のURL接頭辞。デフォルト宇宙は空文字、他は /s/<slug>。
+    独自ドメイン(Host)で解決されたリクエストは base_override="" によりルート接頭辞になる。"""
+    override = pipeline_common.current_base_override()
+    if override is not None:
+        return override
     sid = pipeline_common.current_space_id()
     return "" if sid == pipeline_common.DEFAULT_SPACE_ID else f"/s/{sid}"
 
@@ -2902,17 +3187,27 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
             space_id, route_path = resolve_space_path(parsed.path)
+            base_override = None
             with db() as conn:
+                # 独自ドメイン→スペース解決（完全分離）。一致したら接頭辞なしのルートとして扱う。
+                # 未登録Host（localhost・onrender.com等）は従来どおり。/s/<slug>/ 互換も維持。
+                host_sid = pipeline_common.space_id_for_host(conn, self.headers.get("Host"))
+                if host_sid:
+                    space_id, route_path = host_sid, parsed.path
+                    base_override = ""
                 if space_id != pipeline_common.DEFAULT_SPACE_ID and not pipeline_common.space_exists(conn, space_id):
                     self.send_html(layout("404", "<h1>404</h1><p>この宇宙は見つかりませんでした。</p>"), 404)
                     return
                 wv = pipeline_common.load_worldview_for_space(conn, space_id)
-            pipeline_common.set_current_space(space_id, wv)
+            pipeline_common.set_current_space(space_id, wv, base_override=base_override)
             if is_admin_path(route_path) and not self.require_admin():
                 return
             scene = pipeline_common.worldview_scene()
-            if route_path in ("/", "/cosmos", "/questions") and scene == "goma":
-                # gomaシーンでは / /cosmos /questions はすべて同じ護摩公開ビュー
+            if route_path == "/cosmos" and scene == "goma":
+                # gomaシーンの /cosmos は「焔の空」（既存3Dエンジン流用の暖色没入ビュー）。
+                self.send_html(goma_cosmos_page())
+            elif route_path in ("/", "/questions") and scene == "goma":
+                # gomaシーンでは / /questions はどちらも同じ護摩公開ビュー
                 # （「今朝の問い」カードで代替。星シーンの専用ページは持たない）。
                 self.send_html(goma_public_page())
             elif route_path == "/":
@@ -3025,14 +3320,21 @@ class Handler(BaseHTTPRequestHandler):
             pipeline_common.clear_current_space()
 
     def do_POST(self) -> None:
-        space_id, path = resolve_space_path(urlparse(self.path).path)
+        raw_path = urlparse(self.path).path
+        space_id, path = resolve_space_path(raw_path)
+        base_override = None
         try:
             with db() as conn:
+                # 独自ドメイン→スペース解決（do_GETと同一規則）。
+                host_sid = pipeline_common.space_id_for_host(conn, self.headers.get("Host"))
+                if host_sid:
+                    space_id, path = host_sid, raw_path
+                    base_override = ""
                 if space_id != pipeline_common.DEFAULT_SPACE_ID and not pipeline_common.space_exists(conn, space_id):
                     self.send_html(layout("404", "<h1>404</h1>"), 404)
                     return
                 wv = pipeline_common.load_worldview_for_space(conn, space_id)
-            pipeline_common.set_current_space(space_id, wv)
+            pipeline_common.set_current_space(space_id, wv, base_override=base_override)
             if is_admin_path(path) and not self.require_admin():
                 return
             if path in ("/api/line-webhook", "/webhook/line"):

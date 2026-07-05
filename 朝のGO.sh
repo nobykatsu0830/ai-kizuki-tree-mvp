@@ -64,3 +64,15 @@ python3 setup_henjoji_space.py "$HENJOJI_JOIN_PASSWORD"
 unset HENJOJI_JOIN_PASSWORD
 echo "  ✦ 御護摩が本番に灯りました → https://kizuki-universe.onrender.com/s/henjoji/"
 echo "  ※メンバー招待の前に: 遍照寺さん（宗派・文言・名称の使用）への一言確認を忘れずに。"
+
+# 7) （任意・手動）独自ドメインで御護摩を完全分離する — ドメイン決定後にのみ実施
+#    URLから kizuki-universe と /s/henjoji/ が消え、利用者からは完全に別サービスに見える。
+#    ① ドメインのDNSに CNAME を追加: <あなたのドメイン> → kizuki-universe.onrender.com
+#    ② Renderダッシュボード → 対象サービス → Settings → Custom Domains にドメインを追加
+#       （RenderがTLS証明書を自動発行。検証が済むまで数分待つ）
+#    ③ ドメイン→スペースの紐付けを登録（本番は .env の DATABASE_URL 経由で実行される）:
+#         python3 set_space_domain.py henjoji <あなたのドメイン>
+#       解除する場合: python3 set_space_domain.py henjoji ""
+#    ※従来の /s/henjoji/ URL は設定後もそのまま使える（互換維持・リダイレクトなし）。
+echo ""
+echo "STEP 7（任意）: 独自ドメイン設定はドメイン決定後に。手順はこのスクリプト末尾のコメント参照。"

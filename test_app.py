@@ -1068,6 +1068,9 @@ class GomaSceneTest(unittest.TestCase):
             "new_label": "いま、火に入りました",
             "resonate_label": "この護摩木と響き合う",
             "footer": "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。",
+            "cosmos_title": "焔の空",
+            "cosmos_link": "焔の空を眺める",
+            "back_label": "御護摩にもどる",
         },
     }
 
@@ -1243,6 +1246,170 @@ class GomaSceneTest(unittest.TestCase):
         self.assertIn("合言葉", page)
         self.assertIn("くべる", page)
         self.assertNotIn("宇宙", page)
+
+    # --- 焔の空（goma版 /cosmos 3D没入ビュー） ---
+    def test_goma_cosmos_page_has_honoo_no_sora_markup(self):
+        self._add_gomagi("g-cosmos1", "焔の空テスト用の気づき（テスト）", name="テスト炎")
+        self._enter_goma()
+        page = app.goma_cosmos_page().decode("utf-8")
+        self.assertIn("焔の空", page)
+        self.assertIn("御護摩にもどる", page)
+        self.assertIn("護摩木", page)  # STAR_TERM が goma語彙で埋め込まれている
+        self.assertIn("id=\"stage\"", page)  # 既存3Dエンジンのcanvasを流用
+
+    def test_goma_cosmos_page_has_no_star_universe_vocab(self):
+        self._add_gomagi("g-cosmos2", "語彙混入チェック用（テスト）")
+        self._enter_goma()
+        page = app.goma_cosmos_page().decode("utf-8")
+        for word in ("星", "宇宙", "星座", "星雲", "惑星"):
+            self.assertNotIn(word, page)
+
+    def test_goma_cosmos_page_marks_okibi_nodes(self):
+        from datetime import datetime, timedelta, timezone
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat(timespec="seconds")
+        self._add_gomagi("g-okibi-cosmos", "熾火ノードのテスト", approved_at=old_ts, created_at=old_ts)
+        self._enter_goma()
+        page = app.goma_cosmos_page().decode("utf-8")
+        self.assertIn('"okibi":', page)
+        self.assertRegex(page, r'"id":\s*"g-okibi-cosmos"[^}]*"okibi":\s*true')
+
+    def test_noby_cosmos_page_unaffected_by_goma_scene(self):
+        """noby /cosmos の出力はgomaシーンの存在有無に関わらず不変（3D宇宙エンジンのゴールデン確認）。"""
+        pipeline_common.set_current_space("noby-universe", pipeline_common.DEFAULT_WORLDVIEW)
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("n-cosmos", "web", "Dさん", "宇宙側の気づき", "[]", "approved",
+                 pipeline_common.now_iso(), "noby-universe", "insight", "universe"),
+            )
+        page = app.cosmos_page().decode("utf-8")
+        self.assertIn("宇宙を旅する", page)
+        for word in ("護摩", "遍照", "焔", "熾火", "くべる"):
+            self.assertNotIn(word, page)
+
+    def test_goma_public_page_links_to_honoo_no_sora(self):
+        self._enter_goma()
+        page = app.goma_public_page().decode("utf-8")
+        self.assertIn(f'href="{app.space_base()}/cosmos"', page)
+        self.assertIn("焔の空を眺める", page)
+
+
+class CompleteSeparationTest(unittest.TestCase):
+    """完全分離（v1.2）: 独自ドメイン→スペース解決・base接頭辞の消去・テーマのper-space分離。"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = app.DB_PATH
+        app.DB_PATH = Path(self._tmpdir.name) / "kizuki_tree.sqlite3"
+        app.init_db()
+        with app.db() as conn:
+            pipeline_common.create_space(conn, "henjoji", "気づきの御護摩", GomaSceneTest.GOMA_WORLDVIEW)
+
+    def tearDown(self):
+        app.DB_PATH = self._original_db_path
+        pipeline_common.clear_current_space()
+        self._tmpdir.cleanup()
+
+    def _enter(self, space_id, base_override=None):
+        with app.db() as conn:
+            wv = pipeline_common.load_worldview_for_space(conn, space_id)
+        pipeline_common.set_current_space(space_id, wv, base_override=base_override)
+
+    # --- A. 独自ドメイン解決 ---
+    def test_host_resolution_matches_custom_domain(self):
+        with app.db() as conn:
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "goma.example.jp")
+            self.assertEqual(pipeline_common.space_id_for_host(conn, "goma.example.jp"), "henjoji")
+            # ポート番号・大文字も正規化して一致する
+            self.assertEqual(pipeline_common.space_id_for_host(conn, "GOMA.Example.JP:8787"), "henjoji")
+
+    def test_unregistered_host_returns_none(self):
+        with app.db() as conn:
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "goma.example.jp")
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, "localhost"))
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, "localhost:8787"))
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, "kizuki-universe.onrender.com"))
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, ""))
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, None))
+
+    def test_set_domain_validates_rejects_duplicate_and_clears(self):
+        with app.db() as conn:
+            pipeline_common.create_space(conn, "another", "別スペース", {})
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "goma.example.jp")
+            # 冪等: 同じ値の再設定はOK
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "goma.example.jp")
+            # 重複: 他スペースへの同一ドメインは拒否
+            with self.assertRaises(ValueError):
+                pipeline_common.set_space_custom_domain(conn, "another", "goma.example.jp")
+            # 形式不正は拒否
+            with self.assertRaises(ValueError):
+                pipeline_common.set_space_custom_domain(conn, "henjoji", "not a domain!")
+            # 空文字で解除（冪等）
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "")
+            self.assertIsNone(pipeline_common.get_space_custom_domain(conn, "henjoji"))
+            self.assertIsNone(pipeline_common.space_id_for_host(conn, "goma.example.jp"))
+
+    def test_host_resolved_page_has_no_slug_prefix(self):
+        """host解決（base_override=""）ではページ内リンク・formに /s/henjoji/ が現れない。"""
+        with app.db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, approved_at, space_id, star_kind, visibility) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                ("sep1", "web", "テスト分離", "分離テストの気づき", "[]", "approved",
+                 pipeline_common.now_iso(), pipeline_common.now_iso(), "henjoji", "insight", "universe"),
+            )
+        self._enter("henjoji", base_override="")
+        self.assertEqual(app.space_base(), "")
+        page = app.goma_public_page().decode("utf-8")
+        self.assertNotIn("/s/henjoji", page)
+        self.assertIn('href="/submit"', page)
+        self.assertIn('href="/star/sep1"', page)
+
+    def test_slug_path_still_works_after_domain_set(self):
+        """custom_domain設定後も /s/<slug>/ の従来経路は互換維持（接頭辞つきで描画）。"""
+        with app.db() as conn:
+            pipeline_common.set_space_custom_domain(conn, "henjoji", "goma.example.jp")
+        # 従来のパス解決はそのまま
+        self.assertEqual(app.resolve_space_path("/s/henjoji/cosmos"), ("henjoji", "/cosmos"))
+        self._enter("henjoji")  # base_overrideなし=パス方式
+        self.assertEqual(app.space_base(), "/s/henjoji")
+        page = app.goma_public_page().decode("utf-8")
+        self.assertIn('href="/s/henjoji/submit"', page)
+
+    # --- B. テーマのper-space化 ---
+    def test_theme_separation_across_spaces(self):
+        with app.db() as conn:
+            pipeline_common.ensure_theme(conn, "noby専用テーマ", space_id="noby-universe")
+            pipeline_common.ensure_theme(conn, "護摩専用テーマ", space_id="henjoji")
+            pipeline_common.set_theme_status(conn, "noby専用テーマ", "hidden", space_id="noby-universe")
+            # active語彙の分離
+            self.assertIn("護摩専用テーマ", pipeline_common.active_theme_names(conn, space_id="henjoji"))
+            self.assertNotIn("noby専用テーマ", pipeline_common.active_theme_names(conn, space_id="henjoji"))
+            self.assertNotIn("護摩専用テーマ", pipeline_common.active_theme_names(conn, space_id="noby-universe"))
+            # hidden集合の分離: nobyでhiddenにしてもhenjojiのhiddenには現れない
+            self.assertIn("noby専用テーマ", pipeline_common.hidden_theme_names(conn, space_id="noby-universe"))
+            self.assertNotIn("noby専用テーマ", pipeline_common.hidden_theme_names(conn, space_id="henjoji"))
+            # overview の分離
+            henjoji_names = {t["name"] for t in pipeline_common.theme_overview(conn, space_id="henjoji")}
+            self.assertNotIn("noby専用テーマ", henjoji_names)
+
+    def test_rename_theme_scoped_to_space(self):
+        """nobyのテーマ改名がhenjojiのreflectionsタグ・テーマ表に波及しない。"""
+        with app.db() as conn:
+            for rid, sid in (("r-noby", "noby-universe"), ("r-goma", "henjoji")):
+                conn.execute(
+                    "INSERT INTO reflections (id, source, display_name, body, tags, status, created_at, space_id, star_kind, visibility) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (rid, "web", "T", "本文", json.dumps(["共通の名前"], ensure_ascii=False), "approved",
+                     pipeline_common.now_iso(), sid, "insight", "universe"),
+                )
+            pipeline_common.ensure_theme(conn, "共通の名前", space_id="noby-universe")
+            pipeline_common.rename_theme(conn, "共通の名前", "改名後", space_id="noby-universe")
+            noby_tags = conn.execute("SELECT tags FROM reflections WHERE id='r-noby'").fetchone()["tags"]
+            goma_tags = conn.execute("SELECT tags FROM reflections WHERE id='r-goma'").fetchone()["tags"]
+            self.assertIn("改名後", noby_tags)
+            self.assertIn("共通の名前", goma_tags)  # henjoji側は無傷
 
 
 if __name__ == "__main__":
