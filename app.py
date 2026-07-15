@@ -2830,9 +2830,7 @@ def goma_public_page() -> bytes:
 
   <div class="cta-area">
     <a class="cta" href="{base}/submit">{esc(gw.get("cta", "今朝の気づきを、くべる"))}</a>
-    <div class="cta-note">{esc(gw.get("cta_note", "お勤めのあと、心に残ったひとことを。"))}</div>
     <div class="cta-note" style="margin-top:16px">
-      気づき護摩木をくべるには、朝勤行にご参加ください。<br>
       <a class="answer-link" href="https://henjyoji-asagongyo.netlify.app/" target="_blank" rel="noopener">朝勤行にオンラインで参加する →</a>
     </div>
   </div>
