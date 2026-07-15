@@ -2831,6 +2831,10 @@ def goma_public_page() -> bytes:
   <div class="cta-area">
     <a class="cta" href="{base}/submit">{esc(gw.get("cta", "今朝の気づきを、くべる"))}</a>
     <div class="cta-note">{esc(gw.get("cta_note", "お勤めのあと、心に残ったひとことを。"))}</div>
+    <div class="cta-note" style="margin-top:16px">
+      気づき護摩木をくべるには、朝勤行にご参加ください。<br>
+      <a class="answer-link" href="https://henjyoji-asagongyo.netlify.app/" target="_blank" rel="noopener">朝勤行にオンラインで参加する →</a>
+    </div>
   </div>
 
   <footer>{esc(gw.get("footer", "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。"))}</footer>
@@ -3001,6 +3005,7 @@ def goma_join_gate_page(next_path: str = "", error: bool = False) -> bytes:
   </header>
   <div class="goma-form">
     <p class="goma-notice">この御護摩に気づきをくべるには、合言葉が必要です。お申し込みいただいた方にお伝えしています。</p>
+    <p class="goma-notice"><a class="answer-link" href="https://henjyoji-asagongyo.netlify.app/" target="_blank" rel="noopener">朝勤行にオンラインで参加する →</a></p>
     {error_html}
     <form method="post" action="{base}/join">
       <input type="hidden" name="next" value="{esc(next_path)}">
