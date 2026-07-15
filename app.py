@@ -2390,6 +2390,18 @@ def goma_is_okibi(row, now: datetime | None = None) -> bool:
     return (now - basis) > timedelta(hours=24 * GOMA_OKIBI_THRESHOLD_DAYS)
 
 
+GOMA_KIZUKI_TABLET_LIMIT = 20
+
+
+def goma_kizuki_tablet_text(body: str | None) -> str:
+    """護摩木札（縦書き固定サイズ）向けの短縮表示。木札からはみ出さないよう文字数で切り、
+    切った場合のみ末尾に「・・・」を付す（詳細ページ側は全文のまま変更しない）。"""
+    text = body or ""
+    if len(text) <= GOMA_KIZUKI_TABLET_LIMIT:
+        return text
+    return text[:GOMA_KIZUKI_TABLET_LIMIT] + "・・・"
+
+
 GOMA_CSS = """
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
@@ -2493,6 +2505,7 @@ GOMA_CSS = """
     writing-mode: vertical-rl; text-orientation: upright;
     width: 62px; height: 268px; padding: 18px 0;
     display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    overflow: hidden;
     background:
       repeating-linear-gradient(90deg, rgba(0,0,0,0.07) 0 2px, transparent 2px 7px),
       linear-gradient(175deg, #a8845c 0%, #8a6a46 45%, #6d5136 100%);
@@ -2685,7 +2698,7 @@ def goma_public_page() -> bytes:
         created = (row_get(r, "approved_at") or row_get(r, "created_at") or "")[:10]
         gomagi_html = (
             f'<a class="{classes}" href="{base}/star/{esc(r["id"])}">'
-            f'<div class="kizuki">{esc(r["body"])}</div>'
+            f'<div class="kizuki">{esc(goma_kizuki_tablet_text(r["body"]))}</div>'
             f'<div class="who">{esc(r["display_name"])}　{esc(created)}</div></a>'
         )
         if is_new:
