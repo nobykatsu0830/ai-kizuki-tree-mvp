@@ -2834,8 +2834,6 @@ def goma_public_page() -> bytes:
       <a class="answer-link" href="https://henjyoji-asagongyo.netlify.app/" target="_blank" rel="noopener">朝勤行にオンラインで参加する →</a>
     </div>
   </div>
-
-  <footer>{esc(gw.get("footer", "遍照 ── あまねく照らす。ひとつの気づきが、みなの明日を照らしますように。"))}</footer>
 </div>'''
     return goma_layout(gw.get("title", "気づきの御護摩"), body)
 
