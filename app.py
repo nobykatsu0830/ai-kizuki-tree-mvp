@@ -38,6 +38,7 @@ from pipeline import export_obsidian
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "data" / "kizuki_tree.sqlite3"
 STATIC_DEPLOY_DIR = Path(os.environ.get("KIZUKI_STATIC_DEPLOY_DIR", "/Users/noby/product/kizuki-universe-deploy"))
+GOMA_OG_IMAGE_BYTES = (ROOT / "static" / "og-image-goma.png").read_bytes()
 
 
 def load_dotenv() -> None:
@@ -2650,15 +2651,41 @@ GOMA_CSS = """
 """
 
 
+def goma_og_origin() -> str:
+    """OGP等の絶対URL組み立て用オリジン。Hostヘッダ未取得時は独自ドメインを既定値とする。"""
+    host = pipeline_common.current_request_host() or "henjyoji-goma.onrender.com"
+    return f"https://{host}"
+
+
 def goma_layout(title: str, body_html: str) -> bytes:
     """gomaシーン専用のページシェル（既存 layout() とは独立。星UIのCSS/構造は使わない）。"""
-    temple = pipeline_common.worldview_goma().get("temple", "遍照寺 朝のお勤め")
+    gw = pipeline_common.worldview_goma()
+    temple = gw.get("temple", "遍照寺 朝のお勤め")
+    tagline = gw.get("tagline", "あなたの気づきが、護摩木となって、誰かの明日を照らす。")
+    full_title = f"{esc(title)} — {esc(temple)}"
+    origin = goma_og_origin()
+    base = space_base()
+    page_url = f"{origin}{base}/"
+    image_url = f"{origin}{base}/og-image.png"
     page = f'''<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{esc(title)} — {esc(temple)}</title>
+<title>{full_title}</title>
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:site_name" content="{esc(temple)}">
+<meta property="og:title" content="{full_title}">
+<meta property="og:description" content="{esc(tagline)}">
+<meta property="og:url" content="{esc(page_url)}">
+<meta property="og:image" content="{esc(image_url)}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{full_title}">
+<meta name="twitter:description" content="{esc(tagline)}">
+<meta name="twitter:image" content="{esc(image_url)}">
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;800&display=swap" rel="stylesheet">
 <style>{GOMA_CSS}</style>
 </head>
@@ -3112,6 +3139,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_png(self, payload: bytes, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def redirect(self, path: str) -> None:
         self.send_response(303)
         self.send_header("Location", path)
@@ -3212,11 +3247,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_html(layout("404", "<h1>404</h1><p>この宇宙は見つかりませんでした。</p>"), 404)
                     return
                 wv = pipeline_common.load_worldview_for_space(conn, space_id)
-            pipeline_common.set_current_space(space_id, wv, base_override=base_override)
+            pipeline_common.set_current_space(space_id, wv, base_override=base_override, host=self.headers.get("Host"))
             if is_admin_path(route_path) and not self.require_admin():
                 return
             scene = pipeline_common.worldview_scene()
-            if route_path == "/cosmos" and scene == "goma":
+            if route_path == "/og-image.png" and scene == "goma":
+                # OGP画像（1200x630・HP同一デザイン言語）。LINE/Twitter/Facebook等のリンクプレビュー用。
+                self.send_png(GOMA_OG_IMAGE_BYTES)
+            elif route_path == "/cosmos" and scene == "goma":
                 # gomaシーンの /cosmos は「焔の空」（既存3Dエンジン流用の暖色没入ビュー）。
                 self.send_html(goma_cosmos_page())
             elif route_path in ("/", "/questions") and scene == "goma":
@@ -3347,7 +3385,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_html(layout("404", "<h1>404</h1>"), 404)
                     return
                 wv = pipeline_common.load_worldview_for_space(conn, space_id)
-            pipeline_common.set_current_space(space_id, wv, base_override=base_override)
+            pipeline_common.set_current_space(space_id, wv, base_override=base_override, host=self.headers.get("Host"))
             if is_admin_path(path) and not self.require_admin():
                 return
             if path in ("/api/line-webhook", "/webhook/line"):

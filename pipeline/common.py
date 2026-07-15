@@ -206,25 +206,33 @@ def load_worldview(path: str | Path = DEFAULT_WORLDVIEW_PATH) -> dict:
 _request_ctx = threading.local()
 
 
-def set_current_space(space_id: str, worldview: dict, base_override: str | None = None) -> None:
+def set_current_space(space_id: str, worldview: dict, base_override: str | None = None, host: str | None = None) -> None:
     """リクエスト処理の先頭で、対象スペースと世界観を束ねてセットする。
 
     base_override: 独自ドメイン(Host)解決時に "" を渡すと、URL接頭辞が /s/<slug> ではなく
-    ルート("")になる（完全分離）。None なら従来のパス方式のまま。"""
+    ルート("")になる（完全分離）。None なら従来のパス方式のまま。
+    host: リクエストのHostヘッダ（OGP等で絶対URLを組み立てる際に使用）。"""
     _request_ctx.space_id = space_id
     _request_ctx.worldview = worldview
     _request_ctx.base_override = base_override
+    _request_ctx.host = host
 
 
 def clear_current_space() -> None:
     _request_ctx.space_id = None
     _request_ctx.worldview = None
     _request_ctx.base_override = None
+    _request_ctx.host = None
 
 
 def current_base_override() -> str | None:
     """独自ドメイン解決時のURL接頭辞上書き（"" = ルート）。未解決なら None。"""
     return getattr(_request_ctx, "base_override", None)
+
+
+def current_request_host() -> str | None:
+    """現在のリクエストのHostヘッダ（絶対URL組み立て用。未設定ならNone）。"""
+    return getattr(_request_ctx, "host", None)
 
 
 def current_worldview() -> dict:
